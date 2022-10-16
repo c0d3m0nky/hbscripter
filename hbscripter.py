@@ -16,6 +16,8 @@ import encodingCommon as enc
 
 shellcolors = enc.shellcolors
 
+print(sys.argv)
+
 _args = sys.argv.copy()
 _plan = False
 _planOnly = False
@@ -31,7 +33,10 @@ _trace = False
 if '--bash' in _args:
     _bash = True
     _args.remove('--bash')
-elif not '--win' in _args and (sys.platform == "linux" or sys.platform == "linux2"):
+elif '--win' in _args:
+    _shell = False
+    _args.remove('--win')
+elif (sys.platform == "linux" or sys.platform == "linux2"):
     _shell = True
 
 if '--plan' in _args:
