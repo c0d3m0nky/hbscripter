@@ -16,8 +16,6 @@ import encodingCommon as enc
 
 shellcolors = enc.shellcolors
 
-print(sys.argv)
-
 _args = sys.argv.copy()
 _plan = False
 _planOnly = False
