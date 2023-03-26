@@ -237,7 +237,8 @@ class EncodeBatch:
     shortDir: str
 
 _rx_num_delim = re.compile(r'([^\d]|\d+)')
-_sort_offset = {
+_windows_sort_offset = {
+    #Em and En dash seem to be dependent on the surrounding chars
     '—': 0,
     '–': 0,
     '¡': 127.1,
@@ -259,7 +260,7 @@ def windows_file_sort_keys(key: str) -> List:
             if m[i].isdigit():
                 m[i] = int(m[i]) * -1
             else:
-                v = _sort_offset.get(m[i])
+                v = _windows_sort_offset.get(m[i])
 
                 if v == 0:
                     i += 1
