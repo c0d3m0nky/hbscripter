@@ -1,3 +1,4 @@
+import sys
 import os
 import re
 import datetime
@@ -237,18 +238,35 @@ class EncodeBatch:
     shortDir: str
 
 _rx_num_delim = re.compile(r'([^\d]|\d+)')
-_windows_sort_offset = {
-    #Em and En dash seem to be dependent on the surrounding chars
-    '—': 0,
-    '–': 0,
-    '¡': 127.1,
-    '´': 127.3,
-    '¿': 127.5,
-    '-': 127.7,
-    '+': 128.1,
-    '=': 128.3,
-    '': 128.5,
-    '-': 128.7
+_windows_sort_pos = {
+    '!': 1,
+    '#': 2,
+    '$': 3,
+    '%': 4,
+    '&': 5,
+    '(': 6,
+    ')': 7,
+    ',': 8,
+    '.': 9,
+    '.': 10,
+    '.': 11,
+    ';': 12,
+    '@': 13,
+    '[': 14,
+    ']': 15,
+    '^': 16,
+    '_': 17,
+    '`': 18,
+    '{': 19,
+    '}': 20,
+    '~': 21,
+    '¡': 22,
+    '´': 23,
+    '¿': 24,
+    '+': 25,
+    '=': 26,
+    '÷': 27,
+    '·': 28
 }
 
 def windows_file_sort_keys(key: str) -> List:
@@ -258,9 +276,10 @@ def windows_file_sort_keys(key: str) -> List:
 
         while i < len(m):
             if m[i].isdigit():
-                m[i] = int(m[i]) * -1
+                # Moving
+                m[i] = (sys.maxsize * -1) + int(m[i])
             else:
-                v = _windows_sort_offset.get(m[i])
+                v = _windows_sort_pos.get(m[i])
 
                 if v == 0:
                     i += 1
