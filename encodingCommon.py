@@ -272,6 +272,7 @@ _windows_sort_pos = {
     '\'': 1,
     '-': 2
 }
+_windows_sort_num_offset = _max_neg + 30
 
 def windows_file_sort_keys(key: str) -> List:
     m = _rx_num_delim.findall(key.casefold())
@@ -280,7 +281,7 @@ def windows_file_sort_keys(key: str) -> List:
 
         while i < len(m):
             if m[i].isdigit():
-                m[i] = (sys.maxsize * -1) + 30 + int(m[i])
+                m[i] = _windows_sort_num_offset + int(m[i])
             else:
                 v = _windows_sort_pos.get(m[i])
 
