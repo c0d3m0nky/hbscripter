@@ -238,36 +238,39 @@ class EncodeBatch:
     shortDir: str
 
 _rx_num_delim = re.compile(r'([^\d]|\d+)')
+_max_neg = sys.maxsize * -1
 _windows_sort_pos = {
-    ' ': -100,
-    '!': -99,
-    '#': -98,
-    '$': -97,
-    '%': -96,
-    '&': -95,
-    '(': -94,
-    ')': -93,
-    ',': -92,
-    '.': -91,
-    '.': -90,
-    '.': -89,
-    ';': -88,
-    '@': -87,
-    '[': -86,
-    ']': -85,
-    '^': -84,
-    '_': -83,
-    '`': -82,
-    '{': -81,
-    '}': -80,
-    '~': -79,
-    '¡': -78,
-    '´': -77,
-    '¿': -76,
-    '+': -75,
-    '=': -74,
-    '÷': -73,
-    '·': -72
+    ' ': _max_neg + 1,
+    '!': _max_neg + 2,
+    '#': _max_neg + 3,
+    '$': _max_neg + 4,
+    '%': _max_neg + 5,
+    '&': _max_neg + 6,
+    '(': _max_neg + 7,
+    ')': _max_neg + 8,
+    ',': _max_neg + 9,
+    '.': _max_neg + 10,
+    '.': _max_neg + 11,
+    '.': _max_neg + 12,
+    ';': _max_neg + 13,
+    '@': _max_neg + 14,
+    '[': _max_neg + 15,
+    ']': _max_neg + 16,
+    '^': _max_neg + 17,
+    '_': _max_neg + 18,
+    '`': _max_neg + 19,
+    '{': _max_neg + 20,
+    '}': _max_neg + 21,
+    '~': _max_neg + 22,
+    '¡': _max_neg + 23,
+    '´': _max_neg + 24,
+    '¿': _max_neg + 25,
+    '+': _max_neg + 26,
+    '=': _max_neg + 27,
+    '÷': _max_neg + 28,
+    '·': _max_neg + 29,
+    '\'': 1,
+    '-': 2
 }
 
 def windows_file_sort_keys(key: str) -> List:
@@ -277,7 +280,7 @@ def windows_file_sort_keys(key: str) -> List:
 
         while i < len(m):
             if m[i].isdigit():
-                m[i] = int(m[i])
+                m[i] = (sys.maxsize * -1) + 30 + int(m[i])
             else:
                 v = _windows_sort_pos.get(m[i])
 
