@@ -7,6 +7,22 @@ from dataclasses import dataclass
 from typing import List, Any, Dict, Tuple, Callable
 
 
+_ignoreFpsFactor = False
+
+def ignoreFpsFactor():
+    global _ignoreFpsFactor
+
+    _ignoreFpsFactor = True
+
+
+def isint(s):
+    try:
+        int(s)
+        return True
+    except ValueError:
+        return False
+
+
 class shellcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -17,6 +33,7 @@ class shellcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
     OFF = '\033[0m'
+    NOOP = ''
 
 
 @dataclass
@@ -28,6 +45,7 @@ class BitrateCqPair:
 _rxTimeParse = re.compile("[^;:]+")
 _rxTimesParse = re.compile("([^-]+)(-([^-]+))?")
 _rxTimesSplit = re.compile("[^ ]+")
+_rxOptions = re.compile("([mqxr]+)([0-9.]+)")
 _extensions: Dict[str, Callable[[int], BitrateCqPair]] = {}
 _error: Callable[[str], None]
 
@@ -94,6 +112,25 @@ class TimeSpan:
         
         self.length = self.end - self.start
 
+_valid_fps = [23.976,24,25,29.97,30,48,50,59.94,60,72,75,90,100,120]
+
+def is_invalid_fps(fps, orig_fps):
+    global _ignoreFpsFactor
+
+    if not isinstance(fps, float):        
+        return f'FPS_Type:{orig_fps}->{fps}'
+    if fps not in _valid_fps:
+        return f'FPS_Value:{orig_fps}->{fps}'
+    if fps > orig_fps == 0:
+        return f'FPS_Greater:{orig_fps}->{fps}'
+
+    mod = orig_fps % fps
+    div = orig_fps / fps
+    if mod >= 0.06 and fps - mod >= 0.06:
+        if not _ignoreFpsFactor:
+            return f'FPS_Factor:{orig_fps}->{fps} [{mod}][{div}][{fps - mod}]'
+    return None
+
 
 class EncodeConfig:
     sourcePath: Path
@@ -106,8 +143,15 @@ class EncodeConfig:
     targetCq: int
     times: List[TimeSpan]
     multiTimes: bool
+    resDropped: bool
+    isRenc: bool
+    fps: int
+    setfps: float
+    exclude: bool
+    excludeReason: str
+    mods: str
 
-    def __init__(self, dirPath: Path, destPath: Path, fileName: str, name, times, videoLen, bitrate, ext, usrCq, mincq, maxcq):
+    def __init__(self, dirPath: Path, destPath: Path, fileName: str, name, times, videoLen, fps, bitrate, ext, parentcq, fileoptions, mincq, maxcq):
         self.sourcePath = dirPath / fileName
         fext = self.sourcePath.suffix
         self.fileName = fileName
@@ -115,26 +159,50 @@ class EncodeConfig:
         self.videoLen = videoLen
         self.timeStr = times
         self.sourceBitrate = bitrate
+        self.resDropped = False
+        self.isRenc = True
         self.times = []
+        self.fps = fps
+        self.setfps = None
+        self.exclude = False
+        self.mods = ''
 
         extMapping = _extensions[ext](bitrate)
         self.targetBitrate = extMapping.bitrate
 
         self.targetCq = extMapping.cq
+        optionsCq = None
 
-        if usrCq:
-            if isinstance(usrCq, str) and usrCq.startswith('mx'):
-                usrCq = int(usrCq[2:])
-                if self.targetCq > usrCq:
-                    self.targetCq = usrCq
-            elif isinstance(usrCq, str) and usrCq.startswith('m'):
-                usrCq = int(usrCq[1:])
-                if self.targetCq < usrCq:
-                    self.targetCq = usrCq
+        if fileoptions:
+            if isinstance(fileoptions, int) or isint(fileoptions):
+                optionsCq = int(fileoptions)
             else:
-                self.targetCq = int(usrCq)
+                for m in re.finditer(_rxOptions, fileoptions):
+                    if m.group(1).startswith('mx'):
+                        v = int(m.group(2))
+                        if self.targetCq > v:
+                            optionsCq = v
+                    elif m.group(1).startswith('m'):
+                        v = int(m.group(2))
+                        if self.targetCq < v:
+                            optionsCq = v
+                    elif m.group(1).startswith('q'):
+                        optionsCq = int(m.group(2))
+                    elif m.group(1).startswith('r'):
+                        f = float(m.group(2))
+                        v = is_invalid_fps(f, fps)
+                        if v:
+                            self.exclude = True
+                            self.excludeReason = v
+                        else:
+                            self.setfps = f
+                            self.mods = f'\t{shellcolors.OKBLUE}FPS:{self.fps}->{self.setfps}'
+        if optionsCq:
+            self.targetCq = optionsCq
+        elif parentcq and isinstance(parentcq, int):
+            self.targetCq = parentcq
         else:
-            # print(f'name: {name[:24]}\tusrCq: {usrCq}\tmincq: {mincq} maxcq: {maxcq}\ttargetCq: {self.targetCq}')
+            #print(f'name: {name[:24]}\tfileoptions: {fileoptions}\tmincq: {mincq} maxcq: {maxcq}\ttargetCq: {self.targetCq}')
             if mincq > maxcq:
                 cqh = mincq
                 mincq = maxcq
@@ -146,6 +214,7 @@ class EncodeConfig:
                 self.targetCq = maxcq
 
         if not times == 'renc':
+            self.isRenc = False
             for c in re.finditer(_rxTimesSplit, times):
                 m = _rxTimesParse.search(c.group(0))
 
@@ -166,3 +235,40 @@ class EncodeBatch:
     files: List[EncodeConfig]
     destFolder: Path
     shortDir: str
+
+_rx_num_delim = re.compile(r'([^\d]|\d+)')
+_sort_offset = {
+    '—': 0,
+    '–': 0,
+    '¡': 127.1,
+    '´': 127.3,
+    '¿': 127.5,
+    '-': 127.7,
+    '+': 128.1,
+    '=': 128.3,
+    '': 128.5,
+    '-': 128.7
+}
+
+def windows_file_sort_keys(key: str) -> List:
+    m = _rx_num_delim.findall(key.casefold())
+    if m:
+        i = 0
+
+        while i < len(m):
+            if m[i].isdigit():
+                m[i] = int(m[i]) * -1
+            else:
+                v = _sort_offset.get(m[i])
+
+                if v == 0:
+                    i += 1
+                    continue
+                elif v:
+                    m[i] = v
+                else:
+                    m[i] = ord(m[i])
+            i += 1
+        return m
+    else:
+        return [key]
