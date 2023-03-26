@@ -342,7 +342,7 @@ def createBatch(encFiles: List[enc.EncodeConfig], destFolder: Path, shortDir: st
     printTimes = lambda ef: '' if ef.isRenc else f'\n{pref}{ef.printTimes(pref, True)}'
     fileStrs = "\n\t".join(map(lambda ef: f'{shellcolors.BOLD}{flag_file(ef)}{ef.mods}{shellcolors.OFF}\t{shellcolors.WARNING if ef.resDropped else shellcolors.OKBLUE}{ef.sourceBitrate} ~> {ef.targetCq}{shellcolors.OFF}{printTimes(ef)}', encFiles))
     nooptMsg = f'    {shellcolors.WARNING}No options set' if noopt else ''
-    print(f'{shellcolors.BOLD}Files in {shortDir}{nooptMsg}\n\t{fileStrs}{shellcolors.OFF}')
+    print(f'{shellcolors.BOLD}Files in {shortDir if shortDir else "/"}{nooptMsg}\n\t{fileStrs}{shellcolors.OFF}')
 
     if not _plan:
         batch = list(filter(lambda ef: not ef.exclude, encFiles))
@@ -564,6 +564,7 @@ def run():
             scanDir(d)
 
         if _singleQueue is not None:
+            print(len(_singleQueue))
             _file_sorter(lambda x: x.shortDir, _singleQueue)
             writeQueue(_singleQueue, Path(_rootDir))
 

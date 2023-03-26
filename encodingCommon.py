@@ -275,6 +275,9 @@ _windows_sort_pos = {
 _windows_sort_num_offset = _max_neg + 30
 
 def windows_file_sort_keys(key: str) -> List:
+    if not key:
+        return [_max_neg]
+        
     m = _rx_num_delim.findall(key.casefold())
     if m:
         i = 0
