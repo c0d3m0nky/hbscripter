@@ -10,7 +10,7 @@ from typing import List, Any, Dict, Tuple, Callable
 
 _ignoreFpsFactor = False
 
-def ignoreFpsFactor():
+def ignore_fps_factor():
     global _ignoreFpsFactor
 
     _ignoreFpsFactor = True
@@ -126,10 +126,9 @@ def is_invalid_fps(fps, orig_fps):
         return f'FPS_Greater:{orig_fps}->{fps}'
 
     mod = orig_fps % fps
-    div = orig_fps / fps
     if mod >= 0.06 and fps - mod >= 0.06:
         if not _ignoreFpsFactor:
-            return f'FPS_Factor:{orig_fps}->{fps} [{mod}][{div}][{fps - mod}]'
+            return f'FPS_Factor:{orig_fps}->{fps} '
     return None
 
 
