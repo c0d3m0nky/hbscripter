@@ -10,15 +10,23 @@ import math
 from functools import reduce
 from pathlib import Path
 from argparse import ArgumentParser
+from tabulate import tabulate
+from tqdm import tqdm
 
-from typing import List, Any, Dict, Tuple, Callable
+from typing import List, Any, Dict, Tuple, Callable, Union
 
 import encodingCommon as enc
 
 shellcolors = enc.shellcolors
 
+_rx_options = r'( \[(([mqxr]*?[0-9.]+ ?)*?)\])*'
+_rx_times_str = re.compile(r'^(.+)~([\d;:\- ]+)' + _rx_options + '$')
+_rx_renc_str = re.compile(r'^(.+)~(renc)' + _rx_options + '$')
+_rx_converted = re.compile(r'(-\d+)?(-nvenc-[cq\d]+)')
+_rx_enc_settings_strip = re.compile(r'(~.+)|((-\d+)?-nvenc-[cq\d]+)')
+
 _file_filters = {
-    'converted': r'(-nvenc-[cq\d]+)'
+    'converted': _rx_converted
 }
 
 _dir_filters = {
@@ -30,28 +38,28 @@ ap.add_argument("-t", "--trace", action='store_true', help="Ignore FPs Factor er
 ap.add_argument("-rd", "--root-dir", type=str, help="Root directory")
 ap.add_argument("-rm", "--root-map", type=str, help="Replace root path segment ([root segment]:[replacement segment])")
 ap.add_argument("-tbr", "--target-bitrate", type=str, help="Target bitrate")
-ap.add_argument("--win", action='store_true', help="Write queue for windows")
+ap.add_argument('-win', "--win", action='store_true', help="Write queue for windows")
 ap.add_argument("--plan", action='store_true', help="Don't write queue")
 ap.add_argument("--clean", action='store_true', help="Show folders needing cleaning")
 ap.add_argument("-iff", "--ignore-fps-factor", action='store_true', help="Ignore FPs Factor error")
 ap.add_argument("-renc", "--renc", action='store_true', help="Reencode all")
 ap.add_argument("-fps", "--list-fps", action='store_true', help="List FPS details")
 ap.add_argument("-fpse", "--list-fps-error", action='store_true', help="List out of bounds FPS")
-ap.add_argument("-fpsf", "--list-fps-folder", action='store_true', help="List FPS folder details")
 ap.add_argument("-btrl", "--bitrate-limit", type=int, default=5, help="Override bitrate upper bound")
 ap.add_argument("-btr", "--list-bitrate", action='store_true', help="List bitrate details")
 ap.add_argument("-btre", "--list-bitrate-error", action='store_true', help="List out of bounds bitrates")
-ap.add_argument("-btrf", "--list-bitrate-folder", action='store_true', help="List bitrate folder details")
+ap.add_argument("-fs", "--list-folder-summaries", action='store_true', help="List details by folder")
 ap.add_argument("-minmb", "--min-bytes", type=int, default=-1, help="Min file size in MB")
 ap.add_argument("-ff", "--file-filter", type=str, choices=_file_filters.keys(), help="File filter")
 ap.add_argument("-df", "--dir-filter", type=str, choices=_dir_filters.keys(), help="Directory filter")
+ap.add_argument("-ns", "--nautilus-sort", type=str, choices=_dir_filters.keys(), help="Sort like Nautilus file browser")
 _args = ap.parse_args()
 
 # takes a while, so avoid if --help called
 import cv2
 
 
-def default_sorter(f: Callable[[Any], str], iterr: List):
+def windows_sorter(f: Callable[[Any], str], iterr: List):
     iterr.sort(key=lambda x: enc.windows_file_sort_keys(f(x)))
 
 
@@ -59,15 +67,16 @@ def nautilus_sorter(f: Callable[[Any], str], iterr: List):
     iterr.sort(key=lambda x: f(x).strip('/').strip('_').casefold())
 
 
-_max_fps = 31
+def dblcmd_sorter(f: Callable[[Any], str], iterr: List):
+    iterr.sort(key=lambda x: enc.dblcmd_file_sort_keys(f(x)))
+
+
+_max_fps = 30
+_bitrate_limit = 5
 _single_queue = []
 _dest_folder_name = '__..c'
 _nobody_uid = pwd.getpwnam("nobody").pw_uid
 _users_gid = grp.getgrnam("users").gr_gid
-
-_rxpOptions = r'( \[(([mqxr]*?[0-9.]+ ?)*?)\])*'
-_rxTimesStr = re.compile(r'^(.+)~([\d;:\- ]+)' + _rxpOptions + "$")
-_rxRencStr = re.compile('^(.+)~(renc)' + _rxpOptions + "$")
 
 _extensions = {
     '.mp4': enc.defaultBitrateMod,
@@ -84,13 +93,21 @@ _extensions = {
 }
 
 _root_map = None
-_list_details = _args.list_fps or _args.list_fps_error or _args.list_fps_folder or _args.list_bitrate or _args.list_bitrate_error or _args.list_bitrate_folder
-_list_fps = _args.list_fps or _args.list_fps_error or _args.list_fps_folder
-_list_bitrate = _args.list_bitrate or _args.list_bitrate_error or _args.list_bitrate_folder
+_list_details = _args.list_fps or _args.list_fps_error or _args.list_bitrate or _args.list_bitrate_error
+_list_fps = _args.list_fps or _args.list_fps_error
+_list_bitrate = _args.list_bitrate or _args.list_bitrate_error
 _file_filter = None
 _dir_filter = None
-_file_sorter = default_sorter if _args.win else nautilus_sorter
+_file_sorter = nautilus_sorter if _args.nautilus_sort else windows_sorter if _args.win else dblcmd_sorter
 _root_dir = Path(_args.root_dir).resolve() if _args.root_dir else Path('./').resolve()
+_set_title = 'title' if _args.win else 'set_title'
+_script_preamble = '' if _args.win else '''#!/bin/bash
+
+function set_title() {
+  echo -e "\033]0;$1\007";
+}
+
+'''
 
 if _args.ignore_fps_factor:
     enc.ignore_fps_factor()
@@ -112,6 +129,9 @@ if _args.file_filter:
 if _args.dir_filter:
     _dir_filter = _dir_filters[_args.dir_filter]
 
+if _args.bitrate_limit:
+    _bitrate_limit = int(_args.bitrate_limit)
+
 
 def logts() -> str:
     return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -130,15 +150,84 @@ def log_trace(msg) -> None:
         print(f'{logts()}\tTRC\t{msg}')
 
 
+# https://github.com/astanin/python-tabulate
+def print_table(data: List[Union[List[Union[str, int]], Dict[str, Union[str, int]]]],
+                headers: Union[str, List[str]] = None,
+                col_order: List[str] = None,
+                tablefmt: str = 'plain',
+                data_row_color: str = None):
+    generate_headers = False
+
+    if headers == 'keys':
+        generate_headers = True
+    elif headers is None:
+        headers = ()
+
+    data_types = list(set(map(lambda x: type(x), data)))
+
+    data_types = list(filter(lambda t: t is not str, data_types))
+
+    if len(data_types) > 1:
+        print('Cannot print table of mixed list and dict')
+        sys.exit(1)
+
+    is_dict_data = data_types[0] == dict
+
+    rows = []
+
+    if (not col_order or '_.' in col_order) and is_dict_data:
+        col_order = col_order if col_order else []
+        for d in data:
+            if type(d) is str:
+                continue
+            for k in d.keys():
+                if not k.startswith('_') and k not in col_order:
+                    col_order.append(k)
+
+    if generate_headers:
+        headers = col_order
+
+    for d in data:
+        if type(d) is str:
+            rows.append([d])
+            continue
+
+        row = []
+        row_color = data_row_color
+
+        def add_cell(c):
+            row.append(f'{row_color}{c}{shellcolors.OFF}')
+
+        if is_dict_data:
+            if '_rowcolor' in d:
+                row_color = d['_rowcolor']
+
+            for k in col_order:
+                if k in d:
+                    add_cell(d[k])
+                else:
+                    add_cell('')
+        else:
+            for c in d:
+                add_cell(c)
+
+        rows.append(row)
+
+    print(tabulate(rows, headers=headers, tablefmt=tablefmt))
+
+
 enc.init(_extensions, error)
 
 
-def cmd_path_map(path: Path):
-    qc = '"'
+def escape_shell_str(obj):
     if _args.win:
-        return qc + str(path).replace('/', '\\').replace('\\mnt\\user\\', '\\\\rmofrequirement.local\\') + qc
+        return str(obj).replace('/', '\\').replace('\\mnt\\user\\', '\\\\rmofrequirement.local\\')
     else:
-        return qc + str(path).replace('"', '""') + qc
+        return str(obj).replace('"', '""').replace('$', r'\$')
+
+
+def cmd_path_map(path: Path):
+    return '"' + escape_shell_str(path) + '"'
 
 
 def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
@@ -161,10 +250,8 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
 
         for f in b.files:
             cmd = ''
-            set_title = False
 
             if _args.win:
-                set_title = True
                 cmd = f'HandBrakeCLI.exe --preset "H.265 NVENC 1080p"'
             else:
                 cmd = f'HandBrakeCLI --preset "H.265 NVENC 1080p"'
@@ -194,13 +281,13 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                     qi += 1
                     cnt = f'-{ti}' if f.multiTimes else ''
                     dest_path = dest_folder / f'{f.name}{cnt}-nvenc{quality}.mp4'
-                    title = f'title "{qi}/{tot} {f.name}" && ' if set_title else ''
+                    title = f'{_set_title} "{qi}/{tot} {escape_shell_str(f.name)}" && ' if _set_title else ''
                     cmds.append(f'{title}{cmd} -o {cmd_path_map(dest_path)} --start-at seconds:{t.start} --stop-at seconds:{t.length}')
                     ti += 1
             else:
                 qi += 1
                 dest_path = dest_folder / f'{f.name}-nvenc{quality}.mp4'
-                title = f'title "{qi}/{tot} {f.name}" && ' if set_title else ''
+                title = f'{_set_title} "{qi}/{tot} {escape_shell_str(f.name)}" && ' if _set_title else ''
                 cmds.append(f'{title}{cmd} -o {cmd_path_map(dest_path)}')
 
             if _args.win:
@@ -209,12 +296,12 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                 cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
 
     if cmds:
-        if _args.win:
-            cmds.append(f'title "Queue Completed"')
+        if _set_title:
+            cmds.append(f'{_set_title} "Queue Completed"')
         qfp = os.path.join(queue_dir, 'queue.txt' if _args.win else 'queue.sh')
         qf = open(qfp, "w")
         qf.truncate()
-        qf.write((" && ^\n" if _args.win else " &&\n").join(cmds))
+        qf.write(_script_preamble + (" && ^\n" if _args.win else " &&\n").join(cmds))
         qf.close()
         st = os.stat(qfp)
         os.chmod(qfp, st.st_mode | stat.S_IEXEC)
@@ -296,8 +383,8 @@ def scan_dir(full_dir: Path):
             fmxcq = mxcq
             if f.stem.startswith('~') or f.stem.startswith('!!'):
                 continue
-            ms = _rxTimesStr.search(f.stem)
-            renc_ms = _rxRencStr.search(f.stem)
+            ms = _rx_times_str.search(f.stem)
+            renc_ms = _rx_renc_str.search(f.stem)
 
             if ms or renc_ms or _args.renc:
                 clean_path = str(f).replace(_root_dir.as_posix(), '')
@@ -350,69 +437,132 @@ def scan_dir(full_dir: Path):
         log(f'Folder is empty: {short_dir}', shellcolors.OKGREEN)
 
 
+def list_file_grouping(path):
+    return re.sub(_rx_enc_settings_strip, '', Path(path).stem)
+
+
 def list_details(dirs):
+    expanded_table = True if sum([_list_fps, _list_bitrate]) > 1 else False
+    data: List[Union[Dict[str, Union[str, int]], str]] = []
+    dir_hdr = 'dir'
+    path_hdr = 'path'
+    files_hdr = 'files'
+    fullpath_hdr = 'fullpath'
+    max_fps_hdr = f'> {_max_fps}'
+    bitrate_limit_hdr = f'> {_bitrate_limit}'
+    col_order = [dir_hdr, path_hdr, files_hdr, max_fps_hdr, bitrate_limit_hdr, fullpath_hdr]
+
     _file_sorter(lambda x: str(x), dirs)
-    for d in dirs:
+    iterr = tqdm(dirs, desc='Scanning files') if len(dirs) > 2 else dirs
+
+    for d in iterr:
+        groupings: List[List[Dict[str, Union[str, int]]]] = []
+
         if _dir_filter and not re.search(_dir_filter, str(d), flags=re.IGNORECASE):
             continue
+
         dir_clean = re.sub(r'^/', '', str(d).replace(_root_dir.as_posix(), ''))
-        dyn_file_count = 0
+
+        if not dir_clean:
+            dir_clean = '[root]'
+
         files = [f for f in d.glob('*') if f.is_file() and f.suffix.lower() in _extensions.keys()]
         _file_sorter(lambda x: x.name, files)
+        fld_datum = {dir_hdr: dir_clean, '_fld_datum': True}
+
+        if _args.list_folder_summaries:
+            data.append(fld_datum)
+        else:
+            data.append(shellcolors.OKBLUE + dir_clean)
 
         for f in files:
             if _file_filter and not re.search(_file_filter, f.name, flags=re.IGNORECASE):
                 continue
             if f.stat().st_size < _args.min_bytes:
                 continue
-            clean_path = re.sub(r'^/', '', str(f).replace(_root_dir.as_posix(), ''))
+
+            clean_path = re.sub(r'^/', '', str(f).replace(_root_dir.as_posix(), '').replace(fld_datum[dir_hdr], '').strip('/'))
+            datum = {'path': '\t' + clean_path, '_grp': list_file_grouping(clean_path)}
+
             v = cv2.VideoCapture(str(f))
+
+            if _args.list_folder_summaries:
+                if 'files' not in fld_datum:
+                    fld_datum['files'] = 1
+                else:
+                    fld_datum['files'] += 1
 
             if _list_fps:
                 fps = v.get(cv2.CAP_PROP_FPS)
 
-                if _args.list_bitrate_folder:
+                if _args.list_folder_summaries:
                     if fps > _max_fps:
-                        dyn_file_count += 1
+                        fld_datum['_rowcolor'] = shellcolors.FAIL
+
+                        if max_fps_hdr not in fld_datum:
+                            fld_datum[max_fps_hdr] = 1
+                        else:
+                            fld_datum[max_fps_hdr] += 1
                 else:
                     if fps > _max_fps:
-                        sc = shellcolors.FAIL
-                    else:
-                        sc = shellcolors.OKGREEN
+                        datum['_rowcolor'] = shellcolors.FAIL
 
-                    if not _args.list_bitrate_error or fps > _max_fps:
-                        if _args.trace:
-                            print(f'{sc}{clean_path} : {fps}{shellcolors.OFF} {str(f)}')
-                        else:
-                            print(f'{sc}{clean_path} : {fps}{shellcolors.OFF}')
-            elif _list_bitrate > 0:
+                    if not _args.list_fps_error or fps > _max_fps:
+                        datum['fps'] = fps
+
+            if _list_bitrate > 0:
                 fps = v.get(cv2.CAP_PROP_FPS)
                 frames = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
                 vlen = math.ceil(frames / fps) + 1
                 vmb = (f.stat().st_size / 1000000) * 8
                 bitrate = round(vmb / vlen, 1)
 
-                if _args.list_bitrate_folder:
-                    if bitrate > _args.bitrate_limit:
-                        dyn_file_count += 1
+                if _args.list_folder_summaries:
+                    if bitrate > _bitrate_limit:
+                        fld_datum['_rowcolor'] = shellcolors.FAIL
+
+                        if bitrate_limit_hdr not in fld_datum:
+                            fld_datum[bitrate_limit_hdr] = 1
+                        else:
+                            fld_datum[bitrate_limit_hdr] += 1
                 else:
-                    mc = shellcolors.OKGREEN
-
                     if bitrate > _args.bitrate_limit:
-                        mc = shellcolors.FAIL
-                    elif _args.list_bitrate_error:
-                        continue
+                        datum['_rowcolor'] = shellcolors.FAIL
 
-                    if _args.trace:
-                        print(f'{mc}{clean_path}: {bitrate}{shellcolors.OFF} {str(d)}')
-                    else:
-                        print(f'{mc}{clean_path}: {bitrate}{shellcolors.OFF}')
+                    datum['bitrate'] = bitrate
 
-        if dyn_file_count > 0:
             if _args.trace:
-                print(f'{shellcolors.OKGREEN}{dir_clean}: {dyn_file_count}{shellcolors.OFF} {str(d)}')
+                datum['fullpath'] = f
+
+            if not _args.list_folder_summaries:
+                if (not groupings) or (not groupings[-1][0]['_grp'] == datum['_grp']):
+                    groupings.append([])
+                groupings[-1].append(datum)
+
+        if _args.trace:
+            fld_datum['fullpath'] = d
+
+        grp_data = []
+        grp_sep = ' '
+
+        for g in groupings:
+            if len(g) > 1:
+                if grp_data and type(grp_data[-1]) is not str:
+                    grp_data.append(grp_sep)
+                grp_data = grp_data + g
+                grp_data.append(grp_sep)
             else:
-                print(f'{shellcolors.OKGREEN}{dir_clean}: {dyn_file_count}{shellcolors.OFF}')
+                grp_data = grp_data + g
+
+        if grp_data:
+            if type(grp_data[-1]) is str:
+                grp_data.pop()
+
+            data = data + grp_data
+        else:
+            data.pop()
+
+    print_table(data, headers='keys' if expanded_table else None, data_row_color=shellcolors.OKGREEN)
 
     print('\n')
 

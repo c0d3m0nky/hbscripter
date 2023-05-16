@@ -7,8 +7,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Any, Dict, Tuple, Callable
 
-
 _ignoreFpsFactor = False
+
 
 def ignore_fps_factor():
     global _ignoreFpsFactor
@@ -78,6 +78,7 @@ def wmvBitrateMod(bitrate: int) -> BitrateCqPair:
     else:
         return BitrateCqPair(1500, 32)
 
+
 def parseTime(time):
     seconds = 0
     part = 0
@@ -107,18 +108,20 @@ class TimeSpan:
     def __init__(self, start, end, videoLen):
         self.start = parseTime(start)
         self.end = parseTime(end) if end else videoLen
-        
+
         if self.start >= self.end:
             raise Exception('Invalid start and end time')
-        
+
         self.length = self.end - self.start
 
-_valid_fps = [23.976,24,25,29.97,30,48,50,59.94,60,72,75,90,100,120]
+
+_valid_fps = [23.976, 24, 25, 29.97, 30, 48, 50, 59.94, 60, 72, 75, 90, 100, 120]
+
 
 def is_invalid_fps(fps, orig_fps):
     global _ignoreFpsFactor
 
-    if not isinstance(fps, float):        
+    if not isinstance(fps, float):
         return f'FPS_Type:{orig_fps}->{fps}'
     if fps not in _valid_fps:
         return f'FPS_Value:{orig_fps}->{fps}'
@@ -202,7 +205,7 @@ class EncodeConfig:
         elif parentcq and isinstance(parentcq, int):
             self.targetCq = parentcq
         else:
-            #print(f'name: {name[:24]}\tfileoptions: {fileoptions}\tmincq: {mincq} maxcq: {maxcq}\ttargetCq: {self.targetCq}')
+            # print(f'name: {name[:24]}\tfileoptions: {fileoptions}\tmincq: {mincq} maxcq: {maxcq}\ttargetCq: {self.targetCq}')
             if mincq > maxcq:
                 cqh = mincq
                 mincq = maxcq
@@ -225,7 +228,7 @@ class EncodeConfig:
         else:
             self.multiTimes = False
 
-    def printTimes(self, pref, color = False):
+    def printTimes(self, pref, color=False):
         length = lambda t: re.sub('^0:', '', str(datetime.timedelta(seconds=t.length)))
         return f"\n{pref}".join(map(lambda t: f'{shellcolors.WARNING if color and t.length > 1800 else ""}{length(t)}\t{t.start} -> {t.end}{shellcolors.OFF}', self.times))
 
@@ -235,6 +238,7 @@ class EncodeBatch:
     files: List[EncodeConfig]
     destFolder: Path
     shortDir: str
+
 
 _rx_num_delim = re.compile(r'([^\d]|\d+)')
 _max_neg = sys.maxsize * -1
@@ -273,10 +277,11 @@ _windows_sort_pos = {
 }
 _windows_sort_num_offset = _max_neg + 30
 
+
 def windows_file_sort_keys(key: str) -> List:
     if not key:
         return [_max_neg]
-        
+
     m = _rx_num_delim.findall(key.casefold())
     if m:
         i = 0
@@ -294,6 +299,28 @@ def windows_file_sort_keys(key: str) -> List:
                     m[i] = v
                 else:
                     m[i] = ord(m[i])
+            i += 1
+        return m
+    else:
+        return [key]
+
+
+_dblcmd_sort_num_offset = _max_neg + 0
+
+
+def dblcmd_file_sort_keys(key: str) -> List:
+    if not key:
+        return [_max_neg]
+
+    m = _rx_num_delim.findall(key.casefold())
+    if m:
+        i = 0
+
+        while i < len(m):
+            if m[i].isdigit():
+                m[i] = _dblcmd_sort_num_offset + int(m[i])
+            else:
+                m[i] = ord(m[i])
             i += 1
         return m
     else:
