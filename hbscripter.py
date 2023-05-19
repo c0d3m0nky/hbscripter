@@ -23,7 +23,9 @@ _rx_options = r'( \[(([mqxr]*?[0-9.]+ ?)*?)\])*'
 _rx_times_str = re.compile(r'^(.+)~([\d;:\- ]+)' + _rx_options + '$')
 _rx_renc_str = re.compile(r'^(.+)~(renc)' + _rx_options + '$')
 _rx_converted = re.compile(r'(-\d+)?(-nvenc-[cq\d]+)')
-_rx_enc_settings_strip = re.compile(r'(~.+)|((-\d+)?-nvenc-[cq\d]+)')
+# _rx_enc_settings_strip = re.compile(r'(~.+)|((-\d+)?-nvenc-[cq\d]+)')
+_rx_enc_settings_strip = re.compile(r'~.+')
+_rx_enc_res_strip = re.compile(r'-nvenc-.+')
 
 _file_filters = {
     'converted': _rx_converted
@@ -48,8 +50,9 @@ ap.add_argument("-fpse", "--list-fps-error", action='store_true', help="List out
 ap.add_argument("-btrl", "--bitrate-limit", type=int, default=5, help="Override bitrate upper bound")
 ap.add_argument("-btr", "--list-bitrate", action='store_true', help="List bitrate details")
 ap.add_argument("-btre", "--list-bitrate-error", action='store_true', help="List out of bounds bitrates")
+ap.add_argument("-len", "--list-length", action='store_true', help="List out video length")
 ap.add_argument("-fs", "--list-folder-summaries", action='store_true', help="List details by folder")
-ap.add_argument("-minmb", "--min-bytes", type=int, default=-1, help="Min file size in MB")
+ap.add_argument("-minmb", "--min-mbytes", type=int, default=-1, help="Min file size in MB")
 ap.add_argument("-ff", "--file-filter", type=str, choices=_file_filters.keys(), help="File filter")
 ap.add_argument("-df", "--dir-filter", type=str, choices=_dir_filters.keys(), help="Directory filter")
 ap.add_argument("-ns", "--nautilus-sort", type=str, choices=_dir_filters.keys(), help="Sort like Nautilus file browser")
@@ -77,6 +80,7 @@ _single_queue = []
 _dest_folder_name = '__..c'
 _nobody_uid = pwd.getpwnam("nobody").pw_uid
 _users_gid = grp.getgrnam("users").gr_gid
+_min_bytes = _args.min_mbytes * 1048576 if _args.min_mbytes > 0 else -1
 
 _extensions = {
     '.mp4': enc.defaultBitrateMod,
@@ -93,7 +97,8 @@ _extensions = {
 }
 
 _root_map = None
-_list_details = _args.list_fps or _args.list_fps_error or _args.list_bitrate or _args.list_bitrate_error
+_list_details = _args.list_fps or _args.list_fps_error or _args.list_bitrate or _args.list_bitrate_error or _args.list_length
+_list_error_only = _args.list_fps_error or _args.list_bitrate_error
 _list_fps = _args.list_fps or _args.list_fps_error
 _list_bitrate = _args.list_bitrate or _args.list_bitrate_error
 _file_filter = None
@@ -437,11 +442,7 @@ def scan_dir(full_dir: Path):
         log(f'Folder is empty: {short_dir}', shellcolors.OKGREEN)
 
 
-def list_file_grouping(path):
-    return re.sub(_rx_enc_settings_strip, '', Path(path).stem)
-
-
-def list_details(dirs):
+def list_details(dirs, file_count):
     expanded_table = True if sum([_list_fps, _list_bitrate]) > 1 else False
     data: List[Union[Dict[str, Union[str, int]], str]] = []
     dir_hdr = 'dir'
@@ -450,16 +451,20 @@ def list_details(dirs):
     fullpath_hdr = 'fullpath'
     max_fps_hdr = f'> {_max_fps}'
     bitrate_limit_hdr = f'> {_bitrate_limit}'
-    col_order = [dir_hdr, path_hdr, files_hdr, max_fps_hdr, bitrate_limit_hdr, fullpath_hdr]
+    fps_hdr = 'fps'
+    bitrate_hdr = 'bitrate'
+    len_hdr = 'length'
+    col_order = [dir_hdr, path_hdr, files_hdr, max_fps_hdr, bitrate_limit_hdr, fps_hdr, bitrate_hdr, len_hdr, fullpath_hdr]
 
     _file_sorter(lambda x: str(x), dirs)
-    iterr = tqdm(dirs, desc='Scanning files') if len(dirs) > 2 else dirs
 
-    for d in iterr:
-        groupings: List[List[Dict[str, Union[str, int]]]] = []
+    if file_count > 30:
+        pbar = tqdm(total=file_count, desc='Scanning files')
+    else:
+        pbar = None
 
-        if _dir_filter and not re.search(_dir_filter, str(d), flags=re.IGNORECASE):
-            continue
+    for d in dirs:
+        groupings: List[Union[str, List[Dict[str, Union[str, int]]]]] = []
 
         dir_clean = re.sub(r'^/', '', str(d).replace(_root_dir.as_posix(), ''))
 
@@ -468,35 +473,50 @@ def list_details(dirs):
 
         files = [f for f in d.glob('*') if f.is_file() and f.suffix.lower() in _extensions.keys()]
         _file_sorter(lambda x: x.name, files)
-        fld_datum = {dir_hdr: dir_clean, '_fld_datum': True}
 
-        if _args.list_folder_summaries:
-            data.append(fld_datum)
-        else:
-            data.append(shellcolors.OKBLUE + dir_clean)
+        fld_datum = {dir_hdr: dir_clean, '_fld_datum': True, '_include': False}
 
         for f in files:
             if _file_filter and not re.search(_file_filter, f.name, flags=re.IGNORECASE):
+                if pbar:
+                    pbar.update()
                 continue
-            if f.stat().st_size < _args.min_bytes:
+            if f.stat().st_size < _min_bytes:
+                if pbar:
+                    pbar.update()
                 continue
 
-            clean_path = re.sub(r'^/', '', str(f).replace(_root_dir.as_posix(), '').replace(fld_datum[dir_hdr], '').strip('/'))
-            datum = {'path': '\t' + clean_path, '_grp': list_file_grouping(clean_path)}
+            clean_path = f.name
+            datum = {'path': '\t' + clean_path, '_stem': f.stem, '_include': False}
+
+            ms1 = _rx_enc_settings_strip.search(f.stem)
+            ms2 = _rx_enc_res_strip.search(f.stem)
+
+            if ms1:
+                datum['_grp_enc'] = _rx_enc_settings_strip.sub('', f.stem)
+                datum['_grp_res'] = None
+            elif ms2:
+                datum['_grp_enc'] = None
+                datum['_grp_res'] = _rx_enc_res_strip.sub('', f.stem)
+            else:
+                datum['_grp_enc'] = None
+                datum['_grp_res'] = f.stem
 
             v = cv2.VideoCapture(str(f))
+            fps = v.get(cv2.CAP_PROP_FPS)
+            frames = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
+            vlen = math.ceil(frames / fps) + 1
 
             if _args.list_folder_summaries:
-                if 'files' not in fld_datum:
-                    fld_datum['files'] = 1
+                if files_hdr not in fld_datum:
+                    fld_datum[files_hdr] = 1
                 else:
-                    fld_datum['files'] += 1
+                    fld_datum[files_hdr] += 1
 
             if _list_fps:
-                fps = v.get(cv2.CAP_PROP_FPS)
-
                 if _args.list_folder_summaries:
                     if fps > _max_fps:
+                        fld_datum['_include'] = True
                         fld_datum['_rowcolor'] = shellcolors.FAIL
 
                         if max_fps_hdr not in fld_datum:
@@ -504,21 +524,23 @@ def list_details(dirs):
                         else:
                             fld_datum[max_fps_hdr] += 1
                 else:
-                    if fps > _max_fps:
+                    above_threshold = fps > _max_fps
+                    if above_threshold:
                         datum['_rowcolor'] = shellcolors.FAIL
 
-                    if not _args.list_fps_error or fps > _max_fps:
-                        datum['fps'] = fps
+                    if (not _args.list_fps_error and not _list_error_only) or (_args.list_fps_error and above_threshold):
+                        fld_datum['_include'] = True
+                        datum['_include'] = True
+
+                    datum[bitrate_hdr] = fps
 
             if _list_bitrate > 0:
-                fps = v.get(cv2.CAP_PROP_FPS)
-                frames = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
-                vlen = math.ceil(frames / fps) + 1
                 vmb = (f.stat().st_size / 1000000) * 8
                 bitrate = round(vmb / vlen, 1)
 
                 if _args.list_folder_summaries:
                     if bitrate > _bitrate_limit:
+                        fld_datum['_include'] = True
                         fld_datum['_rowcolor'] = shellcolors.FAIL
 
                         if bitrate_limit_hdr not in fld_datum:
@@ -526,43 +548,101 @@ def list_details(dirs):
                         else:
                             fld_datum[bitrate_limit_hdr] += 1
                 else:
-                    if bitrate > _args.bitrate_limit:
+                    above_threshold = bitrate > _args.bitrate_limit
+                    if above_threshold:
                         datum['_rowcolor'] = shellcolors.FAIL
 
-                    datum['bitrate'] = bitrate
+                    if (not _args.list_bitrate_error and not _list_error_only) or (_args.list_bitrate_error and above_threshold):
+                        fld_datum['_include'] = True
+                        datum['_include'] = True
+
+                    datum[bitrate_hdr] = bitrate
+
+            if _args.list_length:
+                if not _list_error_only:
+                    fld_datum['_include'] = True
+                    datum['_include'] = True
+                td = datetime.timedelta(seconds=vlen)
+                datum[len_hdr] = str(td).lstrip('0:')
+
+            if pbar:
+                pbar.update()
 
             if _args.trace:
                 datum['fullpath'] = f
 
-            if not _args.list_folder_summaries:
-                if (not groupings) or (not groupings[-1][0]['_grp'] == datum['_grp']):
-                    groupings.append([])
-                groupings[-1].append(datum)
+            if not _args.list_folder_summaries and datum['_include']:
+                # datum['_grp_enc'] = None
+                # datum['_grp_res'] = f.stem
+                if not groupings:
+                    groupings.append([datum['_grp_enc'] or '', datum])
+                else:
+                    prev_grouping = groupings[-1]
+
+                    if datum['_grp_enc']:
+                        grouping = []
+
+                        if prev_grouping[0] == '':
+                            while True:
+                                if type(prev_grouping[-1]) == str:
+                                    prev_grouping.pop()
+                                    break
+                                elif prev_grouping[-1]['_grp_res'] and prev_grouping[-1]['_grp_res'].startswith(datum['_grp_enc']):
+                                    prev_datum = prev_grouping.pop()
+                                    prev_datum['_grp_enc'] = datum['_grp_enc']
+                                    grouping.append(prev_datum)
+                                else:
+                                    break
+
+                            _file_sorter(lambda dt: dt[path_hdr], grouping)
+
+                        if not prev_grouping:
+                            groupings.pop()
+
+                        grouping.insert(0, datum['_grp_enc'])
+                        grouping.append(datum)
+                        groupings.append(grouping)
+                    else:
+                        if not prev_grouping[0] or datum['_grp_res'].startswith(prev_grouping[0]):
+                            prev_grouping.append(datum)
+                        else:
+                            groupings.append(['', datum])
 
         if _args.trace:
             fld_datum['fullpath'] = d
 
-        grp_data = []
-        grp_sep = ' '
+        if _args.list_folder_summaries:
+            data.append(fld_datum)
+        elif fld_datum['_include']:
+            data.append(shellcolors.OKBLUE + dir_clean)
+            grp_data = []
+            grp_sep = ' '
 
-        for g in groupings:
-            if len(g) > 1:
-                if grp_data and type(grp_data[-1]) is not str:
+            for g in groupings:
+                g.pop(0)
+                if len(g) > 1:
+                    if grp_data and type(grp_data[-1]) is not str:
+                        grp_data.append(grp_sep)
+                    grp_data = grp_data + g
                     grp_data.append(grp_sep)
-                grp_data = grp_data + g
-                grp_data.append(grp_sep)
+                else:
+                    grp_data = grp_data + g
+
+            if grp_data:
+                if type(grp_data[-1]) is str:
+                    grp_data.pop()
+
+                data = data + grp_data
             else:
-                grp_data = grp_data + g
+                data.pop()
 
-        if grp_data:
-            if type(grp_data[-1]) is str:
-                grp_data.pop()
+    if pbar:
+        pbar.close()
 
-            data = data + grp_data
-        else:
-            data.pop()
-
-    print_table(data, headers='keys' if expanded_table else None, data_row_color=shellcolors.OKGREEN)
+    if data:
+        print_table(data, headers='keys' if expanded_table else None, data_row_color=shellcolors.OKGREEN, col_order=col_order)
+    else:
+        log('No data to list')
 
     print('\n')
 
@@ -571,16 +651,20 @@ def scan_dirs(skip_dunder_dirs=True):
     log(f'Scanning {_root_dir}')
     sdirs = [_root_dir]
     cleanup = []
+    file_count = 0
 
     for subdir, dirs, files in os.walk(_root_dir):
+        file_count += len(files)
         for d in dirs:
             fdir = Path(os.path.join(subdir, d))
 
-            if skip_dunder_dirs and d == _dest_folder_name:
+            if _dir_filter and not re.search(_dir_filter, str(d), flags=re.IGNORECASE):
+                continue
+            elif skip_dunder_dirs and d == _dest_folder_name:
                 if [f for f in fdir.glob('*') if f.is_file()]:
                     cleanup.append(str(fdir).replace(_root_dir.as_posix(), ''))
                 continue
-            elif skip_dunder_dirs and (d.startswith('.') or d.startswith('__..') or d.startswith('_.')):
+            elif skip_dunder_dirs and (d.startswith('.') or d.startswith(_dest_folder_name) or d.startswith('_.')):
                 continue
             elif d == '___hbscripter' or '___hbscripter' in subdir:
                 continue
@@ -588,15 +672,15 @@ def scan_dirs(skip_dunder_dirs=True):
                 continue
 
             sdirs.append(fdir)
-    return (sdirs, cleanup)
+    return (sdirs, file_count, cleanup)
 
 
 def run():
     if _list_details:
-        (scanDirs, cleanup) = scan_dirs(skip_dunder_dirs=False)
-        list_details(scanDirs)
+        (scanDirs, file_count, cleanup) = scan_dirs(skip_dunder_dirs=False)
+        list_details(scanDirs, file_count)
     else:
-        (scanDirs, cleanup) = scan_dirs()
+        (scanDirs, file_count, cleanup) = scan_dirs()
 
         _file_sorter(lambda x: str(x), scanDirs)
         if cleanup:

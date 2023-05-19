@@ -305,8 +305,12 @@ def windows_file_sort_keys(key: str) -> List:
         return [key]
 
 
-_dblcmd_sort_num_offset = _max_neg + 0
-
+_dblcmd_sort_num_offset = _max_neg + 5
+_dblcmd_sort_pos = {
+    ' ': _max_neg + 1,
+    '!': _max_neg + 2,
+    '_': _max_neg + 3
+}
 
 def dblcmd_file_sort_keys(key: str) -> List:
     if not key:
@@ -320,7 +324,15 @@ def dblcmd_file_sort_keys(key: str) -> List:
             if m[i].isdigit():
                 m[i] = _dblcmd_sort_num_offset + int(m[i])
             else:
-                m[i] = ord(m[i])
+                v = _dblcmd_sort_pos.get(m[i])
+
+                if v == 0:
+                    i += 1
+                    continue
+                elif v:
+                    m[i] = v
+                else:
+                    m[i] = ord(m[i])
             i += 1
         return m
     else:
