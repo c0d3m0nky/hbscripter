@@ -1,3 +1,4 @@
+import glob
 import sys
 import os
 import pwd
@@ -56,6 +57,7 @@ ap.add_argument("-minmb", "--min-mbytes", type=int, default=-1, help="Min file s
 ap.add_argument("-ff", "--file-filter", type=str, choices=_file_filters.keys(), help="File filter")
 ap.add_argument("-df", "--dir-filter", type=str, choices=_dir_filters.keys(), help="Directory filter")
 ap.add_argument("-ns", "--nautilus-sort", type=str, choices=_dir_filters.keys(), help="Sort like Nautilus file browser")
+ap.add_argument("--sort-test", action='store_true', help="Test file sorter")
 _args = ap.parse_args()
 
 # takes a while, so avoid if --help called
@@ -700,4 +702,11 @@ def run():
             write_queue(_single_queue, Path(_root_dir))
 
 
-run()
+if _args.sort_test:
+    files = [Path(f) for f in glob.glob('./windows_sorting/*.txt')]
+    _file_sorter(lambda f: f.name, files)
+
+    for f in files:
+        print(f.name)
+else:
+    run()
