@@ -78,7 +78,7 @@ def dblcmd_sorter(f: Callable[[Any], str], iterr: List):
 
 
 _max_fps = 30
-_bitrate_limit = 5
+_max_bitrate = 5
 _single_queue = []
 _dest_folder_name = '__..c'
 _nobody_uid = pwd.getpwnam("nobody").pw_uid
@@ -138,7 +138,7 @@ if _args.dir_filter:
     _dir_filter = _dir_filters[_args.dir_filter]
 
 if _args.bitrate_limit:
-    _bitrate_limit = int(_args.bitrate_limit)
+    _max_bitrate = int(_args.bitrate_limit)
 
 
 def logts() -> str:
@@ -159,41 +159,31 @@ def log_trace(msg) -> None:
 
 
 # https://github.com/astanin/python-tabulate
-def print_table(data: List[Union[List[Union[str, int]], Dict[str, Union[str, int]]]],
-                headers: Union[str, List[str]] = None,
+def print_table(data: List[Dict[str, Union[str, int]]],
                 col_order: List[str] = None,
-                tablefmt: str = 'plain',
+                tablefmt: str = None,
                 data_row_color: str = None,
-                prefixes: List[str] = None):
-    generate_headers = False
+                prefixes: List[str] = None,
+                unset_cell_color: str = shellcolors.BLACK,
+                show_headers: bool = True):
+    if not tablefmt:
+        tablefmt = 'simple' if show_headers else 'plain'
 
-    if headers == 'keys':
-        generate_headers = True
-    elif headers is None:
-        headers = ()
-
-    data_types = list(set(map(lambda x: type(x), data)))
-
-    data_types = list(filter(lambda t: t is not str, data_types))
-
-    if len(data_types) > 1:
-        print('Cannot print table of mixed list and dict')
-        sys.exit(1)
-
-    is_dict_data = data_types[0] == dict
-
+    headers = []
     rows = []
 
-    if (not col_order or '_.' in col_order) and is_dict_data:
-        col_order = col_order if col_order else []
-        for d in data:
-            if type(d) is str:
-                continue
-            for k in d.keys():
-                if not k.startswith('_') and k not in col_order:
-                    col_order.append(k)
+    for d in data:
+        if type(d) is str:
+            continue
+        for k in d.keys():
+            if not k.startswith('_') and (not col_order or k in col_order) and k not in headers:
+                headers.append(k)
 
-    if generate_headers:
+    if col_order:
+        for k in list(col_order):
+            if k not in headers:
+                col_order.remove(k)
+
         headers = col_order
 
     for d in data:
@@ -219,24 +209,20 @@ def print_table(data: List[Union[List[Union[str, int]], Dict[str, Union[str, int
                         clear = False
             if pref:
                 pref = f'{data_row_color}{pref}{shellcolors.OFF}'
-            row.append(f'{pref}{row_color}{cell_value}{shellcolors.OFF}')
+            row.append(f'{pref}{row_color}{cell_value.replace(unset_cell_color, row_color)}{shellcolors.OFF}')
 
-        if is_dict_data:
-            if '_rowcolor' in d:
-                row_color = d['_rowcolor']
+        if '_rowcolor' in d:
+            row_color = d['_rowcolor']
 
-            for k in col_order:
-                if k in d:
-                    add_cell(d[k])
-                else:
-                    add_cell('')
-        else:
-            for c in d:
-                add_cell(c)
+        for k in col_order:
+            if k in d:
+                add_cell(d[k])
+            else:
+                add_cell('')
 
         rows.append(row)
 
-    print(tabulate(rows, headers=headers, tablefmt=tablefmt))
+    print(tabulate(rows, headers=headers if show_headers else (), tablefmt=tablefmt))
 
 
 enc.init(_extensions, error)
@@ -461,18 +447,19 @@ def scan_dir(full_dir: Path):
 
 
 def list_details(dirs, file_count):
-    expanded_table = True if sum([_list_fps, _list_bitrate]) > 1 else False
+    expanded_table = True if sum([_list_fps, _list_bitrate]) > 1 or _args.list_folder_summaries else False
+    folder_summaries_only = True if sum([_list_fps, _list_bitrate]) < 1 else False
     data: List[Union[Dict[str, Union[str, int]], str]] = []
     dir_hdr = 'dir'
     path_hdr = 'path'
     files_hdr = 'files'
     fullpath_hdr = 'fullpath'
-    max_fps_hdr = f'> {_max_fps}'
-    bitrate_limit_hdr = f'> {_bitrate_limit}'
+    max_fps_hdr = f'fps > {_max_fps}'
+    max_bitrate_hdr = f'btr > {_max_bitrate}'
     fps_hdr = 'fps'
     bitrate_hdr = 'bitrate'
     len_hdr = 'length'
-    col_order = [dir_hdr, path_hdr, files_hdr, max_fps_hdr, bitrate_limit_hdr, fps_hdr, bitrate_hdr, len_hdr, fullpath_hdr]
+    col_order = [dir_hdr, path_hdr, fps_hdr, bitrate_hdr, len_hdr, files_hdr, max_fps_hdr, max_bitrate_hdr, fullpath_hdr]
 
     _file_sorter(lambda x: str(x), dirs)
 
@@ -480,6 +467,8 @@ def list_details(dirs, file_count):
         pbar = tqdm(total=file_count, desc='Scanning files')
     else:
         pbar = None
+
+    fld_count = 0
 
     for d in dirs:
         groupings: List[Union[str, List[Dict[str, Union[str, int]]]]] = []
@@ -534,58 +523,65 @@ def list_details(dirs, file_count):
                 else:
                     fld_datum[files_hdr] += 1
 
-            if _list_fps:
-                if _args.list_folder_summaries:
-                    if fps > _max_fps:
+            if _list_fps or folder_summaries_only:
+                if max_fps_hdr not in fld_datum:
+                    fld_datum[max_fps_hdr] = 0
+                above_threshold = fps > _max_fps
+
+                if above_threshold:
+                    if not fld_datum['_include']:
                         fld_datum['_include'] = True
+                        fld_count += 1
+                    datum['_rowcolor'] = shellcolors.FAIL
+
+                    if folder_summaries_only:
                         fld_datum['_rowcolor'] = shellcolors.FAIL
 
-                        if max_fps_hdr not in fld_datum:
-                            fld_datum[max_fps_hdr] = 1
-                        else:
-                            fld_datum[max_fps_hdr] += 1
-                else:
-                    above_threshold = fps > _max_fps
-                    if above_threshold:
-                        datum['_rowcolor'] = shellcolors.FAIL
+                    fld_datum[max_fps_hdr] += 1
 
-                    if (not _args.list_fps_error and not _list_error_only) or (_args.list_fps_error and above_threshold):
+                if (not _args.list_fps_error and not _list_error_only) or (_args.list_fps_error and above_threshold):
+                    if not fld_datum['_include']:
                         fld_datum['_include'] = True
-                        datum['_include'] = True
+                        fld_count += 1
+                    datum['_include'] = True
 
-                    datum[bitrate_hdr] = fps
+                datum[bitrate_hdr] = fps
 
-            if _list_bitrate > 0:
-                vmb = (f.stat().st_size / 1000000) * 8
+            if _list_bitrate or folder_summaries_only:
+                if max_bitrate_hdr not in fld_datum:
+                    fld_datum[max_bitrate_hdr] = 0
                 if vlen:
+                    vmb = (f.stat().st_size / 1000000) * 8
                     bitrate = round(vmb / vlen, 1)
 
-                    if _args.list_folder_summaries:
-                        if bitrate > _bitrate_limit:
+                    above_threshold = bitrate > _args.bitrate_limit
+                    if bitrate > _max_bitrate:
+                        if not fld_datum['_include']:
                             fld_datum['_include'] = True
+                            fld_count += 1
+                        datum['_rowcolor'] = shellcolors.FAIL
+
+                        if folder_summaries_only:
                             fld_datum['_rowcolor'] = shellcolors.FAIL
 
-                            if bitrate_limit_hdr not in fld_datum:
-                                fld_datum[bitrate_limit_hdr] = 1
-                            else:
-                                fld_datum[bitrate_limit_hdr] += 1
-                    else:
-                        above_threshold = bitrate > _args.bitrate_limit
-                        if above_threshold:
-                            datum['_rowcolor'] = shellcolors.FAIL
+                        fld_datum[max_bitrate_hdr] += 1
 
-                        if (not _args.list_bitrate_error and not _list_error_only) or (_args.list_bitrate_error and above_threshold):
+                    if (not _args.list_bitrate_error and not _list_error_only) or (_args.list_bitrate_error and above_threshold):
+                        if not fld_datum['_include']:
                             fld_datum['_include'] = True
-                            datum['_include'] = True
+                            fld_count += 1
+                        datum['_include'] = True
 
-                        datum[bitrate_hdr] = bitrate
+                    datum[bitrate_hdr] = bitrate
                 else:
                     datum['_include'] = True
                     datum[bitrate_hdr] = f'{shellcolors.FAIL}ERR{shellcolors.OFF}'
 
             if _args.list_length:
                 if not _list_error_only:
-                    fld_datum['_include'] = True
+                    if not fld_datum['_include']:
+                        fld_datum['_include'] = True
+                        fld_count += 1
                     datum['_include'] = True
 
                 if vlen:
@@ -600,7 +596,7 @@ def list_details(dirs, file_count):
             if _args.trace:
                 datum['fullpath'] = f
 
-            if not _args.list_folder_summaries and datum['_include']:
+            if not folder_summaries_only and datum['_include']:
                 if not groupings:
                     groupings.append([datum['_grp_enc'] or '', datum])
                 else:
@@ -640,21 +636,43 @@ def list_details(dirs, file_count):
 
         if _args.list_folder_summaries:
             data.append(fld_datum)
-        elif fld_datum['_include']:
-            data.append(shellcolors.OKBLUE + dir_clean)
+
+        if not folder_summaries_only and fld_datum['_include']:
+            if fld_count > 1 or expanded_table:
+                if not _args.list_folder_summaries:
+                    data.append({dir_hdr: shellcolors.OKBLUE + fld_datum[dir_hdr] + shellcolors.OFF})
+                else:
+                    fld_datum[dir_hdr] = shellcolors.OKBLUE + fld_datum[dir_hdr] + shellcolors.OFF
+                    fld_datum[path_hdr] = fld_datum[files_hdr]
+                    fld_datum.pop(files_hdr)
+                    if _list_fps:
+                        if fld_datum[max_fps_hdr] == 0:
+                            fld_datum[fps_hdr] = fld_datum[max_fps_hdr]
+                        else:
+                            fld_datum[fps_hdr] = f'{shellcolors.FAIL}{str(fld_datum[max_fps_hdr])}{shellcolors.OFF} > {_max_fps}'
+                        fld_datum.pop(max_fps_hdr)
+                    if _list_bitrate:
+                        if fld_datum[max_bitrate_hdr] == 0:
+                            fld_datum[bitrate_hdr] = fld_datum[max_bitrate_hdr]
+                        else:
+                            fld_datum[bitrate_hdr] = f'{shellcolors.FAIL}{str(fld_datum[max_bitrate_hdr])}{shellcolors.OFF} > {_max_bitrate}'
+                        fld_datum.pop(max_bitrate_hdr)
+
             grp_data = []
             grp_sep = ' '
 
             for g in groupings:
-                if _args.excl_ungrp and not g[0]:
+                gn = g.pop(0)
+
+                if _args.excl_ungrp and not gn:
                     continue
-                g.pop(0)
+
                 if len(g) > 1:
                     if grp_data and type(grp_data[-1]) is not str:
                         grp_data.append(grp_sep)
                     grp_data = grp_data + g
                     grp_data.append(grp_sep)
-                    if not _args.excl_ungrp and g[0]:
+                    if not _args.excl_ungrp and gn:
                         for dt in g:
                             dt[path_hdr] = '| ' + dt[path_hdr]
                 else:
@@ -672,7 +690,8 @@ def list_details(dirs, file_count):
         pbar.close()
 
     if data:
-        print_table(data, headers='keys' if expanded_table else None, data_row_color=shellcolors.OKGREEN, col_order=col_order, prefixes=['| '])
+        print()
+        print_table(data, data_row_color=shellcolors.OKGREEN, col_order=col_order, prefixes=['| '], show_headers=expanded_table)
     else:
         log('No data to list')
 
