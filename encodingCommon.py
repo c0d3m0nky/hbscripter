@@ -319,88 +319,104 @@ _dblcmd_sort_pos = {
     '+': _max_neg + 10,
     ',': _max_neg + 11,
     '-': _max_neg + 12,
-    ';': _max_neg + 13,
-    '=': _max_neg + 14,
-    '@': _max_neg + 15,
-    '[': _max_neg + 16,
-    ']': _max_neg + 17,
-    '^': _max_neg + 18,
-    #'_': _max_neg + 19,
-    '`': _max_neg + 20,
-    '{': _max_neg + 21,
-    '}': _max_neg + 22,
-    '~': _max_neg + 23,
-    '¡': _max_neg + 24,
-    '´': _max_neg + 25,
-    '·': _max_neg + 26,
-    '¿': _max_neg + 27,
-    '÷': _max_neg + 28
+    '.': _max_neg + 13,
+    ';': _max_neg + 14,
+    '=': _max_neg + 15,
+    '@': _max_neg + 16,
+    '[': _max_neg + 17,
+    ']': _max_neg + 18,
+    '^': _max_neg + 19,
+    # '_': _max_neg + 20,
+    '`': _max_neg + 21,
+    '{': _max_neg + 22,
+    '}': _max_neg + 23,
+    '~': _max_neg + 24,
+    '¡': _max_neg + 25,
+    '´': _max_neg + 26,
+    '·': _max_neg + 27,
+    '¿': _max_neg + 28,
+    '÷': _max_neg + 29
 }
 _dblcmd_sort_dunder_pre_alpha = ['-']
-_dblcmd_sort_dunder_offset = _max_neg + 19
+_dblcmd_sort_dunder_offset = _max_neg + 20
 # leave buffer for dunder handling
 _dblcmd_sort_pos_max = max(_dblcmd_sort_pos.values())
 _dblcmd_sort_num_offset = _dblcmd_sort_pos_max * 2
+
 
 def dblcmd_file_sort_keys(key: str) -> List:
     if not key:
         return [_max_neg]
 
+    key_path = Path(key)
+    key_stem = key_path.stem
+    key_suffix = key_path.suffix
+
     res: List[Union[str, int]] = []
 
-    m: List[str] = _rx_num_delim.findall(key.casefold())
+    m: List[str] = _rx_num_delim.findall(key_stem.casefold())
     if m:
-        i = 0
+        dblcmd_file_sort_key_parts(m, res)
 
-        while i < len(m):
-            if m[i] == '_':
-                undc = 0
-                num = False
-                follow = None
-                i += 1
+        res.append(_max_neg)
 
-                while i < len(m):
-                    if m[i] == '_':
-                        undc += 1
-                    elif m[i].isdigit():
-                        i -= 1
-                        num = True
-                        break
-                    elif m[i] in _dblcmd_sort_dunder_pre_alpha:
-                        follow = _dblcmd_sort_pos[m[i]] - _max_neg
-                        i -= 1
-                        break
-                    else:
-                        i -= 1
-                        break
-                    i += 1
+        if key_suffix:
+            dblcmd_file_sort_key_parts(_rx_num_delim.findall(key_suffix.casefold()), res)
 
-                res.append(_dblcmd_sort_dunder_offset)
-                if num:
-                    res.append(_dblcmd_sort_dunder_offset)
-                    res.append(undc)
-                    res.append(0)
-                elif follow:
-                    res.append(_dblcmd_sort_dunder_offset)
-                    res.append(undc)
-                    res.append(follow)
-                else:
-                    res.append(_dblcmd_sort_dunder_offset + 1)
-                    res.append(undc * -1)
-                    res.append(0)
-            elif m[i].isdigit():
-                res.append(_dblcmd_sort_num_offset + int(m[i]))
-            else:
-                v = _dblcmd_sort_pos.get(m[i])
-
-                if v == 0:
-                    i += 1
-                    continue
-                elif v:
-                    res.append(v)
-                else:
-                    res.append(ord(m[i]))
-            i += 1
         return res
     else:
         return [key]
+
+
+def dblcmd_file_sort_key_parts(m: List[str], res: List[Union[str, int]]):
+    i = 0
+
+    while i < len(m):
+        if m[i] == '_':
+            undc = 0
+            num = False
+            follow = None
+            i += 1
+
+            while i < len(m):
+                if m[i] == '_':
+                    undc += 1
+                elif m[i].isdigit():
+                    i -= 1
+                    num = True
+                    break
+                elif m[i] in _dblcmd_sort_dunder_pre_alpha:
+                    follow = _dblcmd_sort_pos[m[i]] - _max_neg
+                    i -= 1
+                    break
+                else:
+                    i -= 1
+                    break
+                i += 1
+
+            res.append(_dblcmd_sort_dunder_offset)
+            if num:
+                res.append(_dblcmd_sort_dunder_offset)
+                res.append(undc)
+                res.append(0)
+            elif follow:
+                res.append(_dblcmd_sort_dunder_offset)
+                res.append(undc)
+                res.append(follow)
+            else:
+                res.append(_dblcmd_sort_dunder_offset + 1)
+                res.append(undc * -1)
+                res.append(0)
+        elif m[i].isdigit():
+            res.append(_dblcmd_sort_num_offset + int(m[i]))
+        else:
+            v = _dblcmd_sort_pos.get(m[i])
+
+            if v == 0:
+                i += 1
+                continue
+            elif v:
+                res.append(v)
+            else:
+                res.append(ord(m[i]))
+        i += 1
