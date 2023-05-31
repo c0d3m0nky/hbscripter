@@ -59,21 +59,21 @@ def init(extensions: Dict[str, Callable[[int], BitrateCqPair]], errorLog: Callab
 
 
 def defaultBitrateMod(bitrate: int) -> BitrateCqPair:
-    if bitrate > 8000:
-        return BitrateCqPair(8000, 26)
-    elif bitrate > 5000:
-        return BitrateCqPair(5000, 28)
+    if bitrate > 6000:
+        return BitrateCqPair(6000, 26)
     elif bitrate > 3000:
-        return BitrateCqPair(3000, 30)
+        return BitrateCqPair(3000, 28)
+    elif bitrate > 1000:
+        return BitrateCqPair(1000, 30)
     else:
         return BitrateCqPair(None, 32)
 
 
 def wmvBitrateMod(bitrate: int) -> BitrateCqPair:
-    if bitrate > 8000:
-        return BitrateCqPair(8000, 26)
-    elif bitrate > 5000:
-        return BitrateCqPair(5000, 28)
+    if bitrate > 6000:
+        return BitrateCqPair(6000, 26)
+    elif bitrate > 4000:
+        return BitrateCqPair(4000, 28)
     elif bitrate > 3000:
         return BitrateCqPair(3000, 30)
     else:
@@ -341,16 +341,24 @@ _dblcmd_sort_dunder_pre_alpha = ['-']
 _dblcmd_sort_dunder_offset = _max_neg + 20
 # leave buffer for dunder handling
 _dblcmd_sort_pos_max = max(_dblcmd_sort_pos.values())
-_dblcmd_sort_num_offset = _dblcmd_sort_pos_max * 2
+_dblcmd_sort_num_offset = ((_dblcmd_sort_pos_max - _max_neg) * 2) + _max_neg
 
 
-def dblcmd_file_sort_keys(key: str) -> List:
+def dblcmd_file_sort_keys(key: str, parent: Path) -> List:
     if not key:
         return [_max_neg]
 
-    key_path = Path(key)
-    key_stem = key_path.stem
-    key_suffix = key_path.suffix
+    if parent is None:
+        key_path = Path(key)
+    else:
+        key_path = Path(parent / key)
+
+    if parent is None or key_path.is_file():
+        key_suffix = key_path.suffix
+        key_stem = re.sub(re.escape(key_suffix) + '$', '', key)
+    else:
+        key_suffix = ''
+        key_stem = key
 
     res: List[Union[str, int]] = []
 

@@ -57,7 +57,7 @@ ap.add_argument("--excl-ungrp", action='store_true', help="Exclude ungrouped fil
 ap.add_argument("-minmb", "--min-mbytes", type=int, default=-1, help="Min file size in MB")
 ap.add_argument("-ff", "--file-filter", type=str, choices=_file_filters.keys(), help="File filter")
 ap.add_argument("-df", "--dir-filter", type=str, choices=_dir_filters.keys(), help="Directory filter")
-ap.add_argument("-ns", "--nautilus-sort", type=str, choices=_dir_filters.keys(), help="Sort like Nautilus file browser")
+ap.add_argument("-ns", "--nautilus-sort", action='store_true', help="Sort like Nautilus file browser")
 ap.add_argument("--sort-test", action='store_true', help="Test file sorter")
 _args = ap.parse_args()
 
@@ -65,16 +65,16 @@ _args = ap.parse_args()
 import cv2
 
 
-def windows_sorter(f: Callable[[Any], str], iterr: List):
+def windows_sorter(f: Callable[[Any], str], iterr: List, parent: Path = None):
     iterr.sort(key=lambda x: enc.windows_file_sort_keys(f(x)))
 
 
-def nautilus_sorter(f: Callable[[Any], str], iterr: List):
+def nautilus_sorter(f: Callable[[Any], str], iterr: List, parent: Path = None):
     iterr.sort(key=lambda x: f(x).strip('/').strip('_').casefold())
 
 
-def dblcmd_sorter(f: Callable[[Any], str], iterr: List):
-    iterr.sort(key=lambda x: enc.dblcmd_file_sort_keys(f(x)))
+def dblcmd_sorter(f: Callable[[Any], str], iterr: List, parent: Path = None):
+    iterr.sort(key=lambda x: enc.dblcmd_file_sort_keys(f(x), parent))
 
 
 _max_fps = 30
@@ -106,7 +106,7 @@ _list_fps = _args.list_fps or _args.list_fps_error
 _list_bitrate = _args.list_bitrate or _args.list_bitrate_error
 _file_filter = None
 _dir_filter = None
-_file_sorter = nautilus_sorter if _args.nautilus_sort else windows_sorter if _args.win else dblcmd_sorter
+_file_sorter: Callable[[Callable[[Any], str], List, Path], None] = nautilus_sorter if _args.nautilus_sort else windows_sorter if _args.win else dblcmd_sorter
 _root_dir = Path(_args.root_dir).resolve() if _args.root_dir else Path('./').resolve()
 _set_title = 'title' if _args.win else 'set_title'
 _script_preamble = '' if _args.win else '''#!/bin/bash
@@ -350,7 +350,7 @@ def create_batch(enc_files: List[enc.EncodeConfig], dest_folder: Path, short_dir
 
 
 def scan_dir(full_dir: Path):
-    short_dir = re.sub('^/', '', str(full_dir).replace(_root_dir.as_posix(), ""))
+    short_dir = full_dir.relative_to(_root_dir).as_posix()
     log_trace(f'Checking {short_dir}')
     files = [f for f in full_dir.glob('*') if f.is_file() and f.suffix.lower() in _extensions.keys()]
     optfiles = full_dir.glob('_.*')
@@ -548,7 +548,10 @@ def list_details(dirs: Union[List[Path], Path], file_count):
             print('Bad args combo')
             return
 
-    _file_sorter(lambda x: str(x), dirs)
+    def clean_path(p: Path):
+        return p.relative_to(_root_dir).as_posix()
+
+    _file_sorter(lambda x: clean_path(x), dirs, _root_dir)
 
     if file_count > 30:
         pbar = tqdm(total=file_count, desc='Scanning files')
@@ -560,13 +563,13 @@ def list_details(dirs: Union[List[Path], Path], file_count):
     for d in dirs:
         groupings: List[Union[str, List[Dict[str, Union[str, int]]]]] = []
 
-        dir_clean = re.sub(r'^/', '', str(d).replace(_root_dir.as_posix(), ''))
+        dir_clean = clean_path(d)
 
         if not dir_clean:
             dir_clean = '[root]'
 
         files = [f for f in d.glob('*') if f.is_file() and f.suffix.lower() in _extensions.keys()]
-        _file_sorter(lambda x: x.name, files)
+        _file_sorter(lambda x: x.name, files, d)
 
         fld_datum = {LH.dir_hdr: dir_clean, '_fld_datum': True, '_include': False}
 
@@ -602,7 +605,7 @@ def list_details(dirs: Union[List[Path], Path], file_count):
                 if max_bitrate_hdr not in fld_datum:
                     fld_datum[max_bitrate_hdr] = 0
 
-                if datum['_btr_exc']:
+                if '_btr_exc' in datum and datum['_btr_exc']:
                     if folder_summaries_only:
                         fld_datum['_rowcolor'] = shellcolors.FAIL
 
@@ -659,25 +662,24 @@ def list_details(dirs: Union[List[Path], Path], file_count):
             data.append(fld_datum)
 
         if not folder_summaries_only and fld_datum['_include']:
-            if fld_count > 1 or expanded_table:
-                if not _args.list_folder_summaries:
-                    data.append({LH.dir_hdr: shellcolors.OKBLUE + fld_datum[LH.dir_hdr] + shellcolors.OFF})
-                else:
-                    fld_datum[LH.dir_hdr] = shellcolors.OKBLUE + fld_datum[LH.dir_hdr] + shellcolors.OFF
-                    fld_datum[LH.path_hdr] = fld_datum[LH.files_hdr]
-                    fld_datum.pop(LH.files_hdr)
-                    if _list_fps:
-                        if fld_datum[max_fps_hdr] == 0:
-                            fld_datum[LH.fps_hdr] = fld_datum[max_fps_hdr]
-                        else:
-                            fld_datum[LH.fps_hdr] = f'{shellcolors.FAIL}{str(fld_datum[max_fps_hdr])}{shellcolors.OFF} > {_max_fps}'
-                        fld_datum.pop(max_fps_hdr)
-                    if _list_bitrate:
-                        if fld_datum[max_bitrate_hdr] == 0:
-                            fld_datum[LH.bitrate_hdr] = fld_datum[max_bitrate_hdr]
-                        else:
-                            fld_datum[LH.bitrate_hdr] = f'{shellcolors.FAIL}{str(fld_datum[max_bitrate_hdr])}{shellcolors.OFF} > {_max_bitrate}'
-                        fld_datum.pop(max_bitrate_hdr)
+            if not _args.list_folder_summaries:
+                data.append({LH.dir_hdr: shellcolors.OKBLUE + fld_datum[LH.dir_hdr] + shellcolors.OFF, '_fld_datum': True})
+            else:
+                fld_datum[LH.dir_hdr] = shellcolors.OKBLUE + fld_datum[LH.dir_hdr] + shellcolors.OFF
+                fld_datum[LH.path_hdr] = fld_datum[LH.files_hdr]
+                fld_datum.pop(LH.files_hdr)
+                if _list_fps:
+                    if fld_datum[max_fps_hdr] == 0:
+                        fld_datum[LH.fps_hdr] = fld_datum[max_fps_hdr]
+                    else:
+                        fld_datum[LH.fps_hdr] = f'{shellcolors.FAIL}{str(fld_datum[max_fps_hdr])}{shellcolors.OFF} > {_max_fps}'
+                    fld_datum.pop(max_fps_hdr)
+                if _list_bitrate:
+                    if fld_datum[max_bitrate_hdr] == 0:
+                        fld_datum[LH.bitrate_hdr] = fld_datum[max_bitrate_hdr]
+                    else:
+                        fld_datum[LH.bitrate_hdr] = f'{shellcolors.FAIL}{str(fld_datum[max_bitrate_hdr])}{shellcolors.OFF} > {_max_bitrate}'
+                    fld_datum.pop(max_bitrate_hdr)
 
             grp_data = []
             grp_sep = ' '
@@ -707,6 +709,9 @@ def list_details(dirs: Union[List[Path], Path], file_count):
             else:
                 data.pop()
 
+    if fld_count < 2 and not expanded_table:
+        data = list(filter(lambda d: '_fld_datum' not in d or not d['_fld_datum'], data))
+
     if pbar:
         pbar.close()
 
@@ -719,7 +724,7 @@ def list_details(dirs: Union[List[Path], Path], file_count):
     print('\n')
 
 
-def scan_dirs(skip_dunder_dirs=True):
+def scan_dirs(skip_dunder_dirs=True) -> Tuple[List[Path], int, List[Path]]:
     log(f'Scanning {_root_dir}')
     sdirs = [_root_dir]
     cleanup = []
@@ -734,7 +739,7 @@ def scan_dirs(skip_dunder_dirs=True):
                 continue
             elif skip_dunder_dirs and d == _dest_folder_name:
                 if [f for f in fdir.glob('*') if f.is_file()]:
-                    cleanup.append(str(fdir).replace(_root_dir.as_posix(), ''))
+                    cleanup.append(fdir)
                 continue
             elif skip_dunder_dirs and (d.startswith('.') or d.startswith(_dest_folder_name) or d.startswith('_.')):
                 continue
@@ -757,10 +762,11 @@ def run():
     else:
         (scanDirs, file_count, cleanup) = scan_dirs()
 
-        _file_sorter(lambda x: str(x), scanDirs)
+        _file_sorter(lambda x: str(x), scanDirs, _root_dir)
         if cleanup:
-            _file_sorter(lambda x: x, cleanup)
-            lst = '\n\t'.join(cleanup)
+            clean_dirs: List[str] = list(map(lambda p: p.relative_to(_root_dir).as_posix(), cleanup))
+            _file_sorter(lambda x: x, clean_dirs, _root_dir)
+            lst = '\n\t'.join(clean_dirs)
             log(f'Media to cleanup:\n\t{lst}\n', shellcolors.OKGREEN)
 
         if _args.clean:
@@ -771,13 +777,13 @@ def run():
 
         if _single_queue is not None:
             print(len(_single_queue))
-            _file_sorter(lambda x: x.shortDir, _single_queue)
+            _file_sorter(lambda x: x.shortDir, _single_queue, _root_dir)
             write_queue(_single_queue, Path(_root_dir))
 
 
 if _args.sort_test:
     files = [Path(f) for f in glob.glob('./windows_sorting/*.txt')]
-    _file_sorter(lambda f: f.name, files)
+    _file_sorter(lambda f: f.name, files, _root_dir)
 
     for f in files:
         print(f.name)
