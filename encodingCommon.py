@@ -124,6 +124,8 @@ def is_invalid_fps(fps, orig_fps):
 
     if not isinstance(fps, float):
         return f'FPS_Type:{orig_fps}->{fps}'
+    if fps == 0:
+        return None
     if fps not in _valid_fps:
         return f'FPS_Value:{orig_fps}->{fps}'
     if fps > orig_fps == 0:
@@ -200,7 +202,9 @@ class EncodeConfig:
                             self.excludeReason = v
                         else:
                             self.setfps = f
-                            self.mods = f'\t{shellcolors.OKBLUE}FPS:{self.fps}->{self.setfps}'
+                            if not self.setfps == 0:
+                                self.mods = f'\t{shellcolors.OKBLUE}FPS:{self.fps}->{self.setfps}'
+        
         if optionsCq:
             self.targetCq = optionsCq
         elif parentcq and isinstance(parentcq, int):

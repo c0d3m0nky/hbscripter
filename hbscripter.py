@@ -96,7 +96,8 @@ _extensions = {
     '.mpg': enc.defaultBitrateMod,
     '.flv': enc.defaultBitrateMod,
     '.webm': enc.defaultBitrateMod,
-    '.vid': enc.defaultBitrateMod
+    '.vid': enc.defaultBitrateMod,
+    '.f4v': enc.defaultBitrateMod
 }
 
 _root_map = None
@@ -274,8 +275,8 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                 cmd += f' -q {f.targetCq}.0'
                 quality = f'-cq{f.targetCq}'
 
-            if f.setfps:
-                cmd += f' -r {f.setfps}'
+            if f.setfps and not self.setfps == 0:
+                cmd += f' -r {f.setfps} --pfr'
 
             if _root_map:
                 source_path = Path(f.sourcePath.as_posix().replace(_root_map[0], _root_map[1]))
@@ -321,7 +322,7 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
 def flag_file(ef: enc.EncodeConfig):
     if ef.exclude:
         return shellcolors.FAIL + f'!{ef.excludeReason} {ef.name}'
-    if ef.fps > 35 and not ef.setfps:
+    if not ef.setfps == 0 and ef.fps > 35 and not ef.setfps:
         ef.exclude = True
         return shellcolors.FAIL + f'!FPS:{ef.fps} {ef.name}'
     return ef.name
@@ -398,6 +399,8 @@ def scan_dir(full_dir: Path):
             renc_ms = _rx_renc_str.search(f.stem)
 
             if ms or renc_ms or _args.renc:
+                log_trace(f'ms: {ms}')
+                log_trace(f'renc_ms: {renc_ms}')
                 clean_path = str(f).replace(_root_dir.as_posix(), '')
                 try:
                     ext = f.suffix.lower()
@@ -422,18 +425,24 @@ def scan_dir(full_dir: Path):
                                 fmxcq = fmcq
 
                     if renc_ms:
+                        log_trace(f'file options renc_ms')
                         name = renc_ms.group(1)
                         times = 'renc'
                         enc_bitrate = renc_ms.group(4)
                     elif not ms and _args.renc:
+                        log_trace(f'file options not ms and _args.renc')
                         name = f.stem
                         times = 'renc'
                         enc_bitrate = ''
                     else:
+                        log_trace(f'file options else {ms.groups()}')
                         name = ms.group(1)
                         times = ms.group(2)
                         enc_bitrate = ms.group(4)
+                    log_trace(f'enc_bitrate: {enc_bitrate}')
                     ec = enc.EncodeConfig(full_dir, dest_folder, f.name, name, times, vlen, fps, bitrate, ext, cq, enc_bitrate, mcq, mxcq)
+                    log_trace(f'self.targetCq: {ec.targetCq}')
+                    log_trace(f'self.setfps: {ec.setfps}')
                     if ec.targetCq > mxcq and not enc_bitrate:
                         ec.resDropped = True
                     enc_files.append(ec)
