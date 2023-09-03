@@ -262,6 +262,8 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
 
         for f in b.files:
             cmd = ''
+            quality = ''
+            fps = ''
 
             if _args.win:
                 cmd = f'HandBrakeCLI.exe --preset "H.265 NVENC 1080p"'
@@ -275,8 +277,11 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                 cmd += f' -q {f.targetCq}.0'
                 quality = f'-cq{f.targetCq}'
 
-            if f.setfps and not self.setfps == 0:
+            if f.setfps and not f.setfps == 0:
                 cmd += f' -r {f.setfps} --pfr'
+
+            if f.setfps:
+                fps = f'-r{f.setfps}'
 
             if _root_map:
                 source_path = Path(f.sourcePath.as_posix().replace(_root_map[0], _root_map[1]))
@@ -286,21 +291,23 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                 dest_folder = b.destFolder
 
             cmd += f' -i {cmd_path_map(source_path)}'
+            enc_suffix = f'-nvenc{quality}{fps}'
+            title = escape_shell_str(f.name)
 
             if f.times:
                 ti = 0
                 for t in f.times:
                     qi += 1
                     cnt = f'-{ti}' if f.multiTimes else ''
-                    dest_path = dest_folder / f'{f.name}{cnt}-nvenc{quality}.mp4'
-                    title = f'{_set_title} "{qi}/{tot} {escape_shell_str(f.name)}" && ' if _set_title else ''
-                    cmds.append(f'{title}{cmd} -o {cmd_path_map(dest_path)} --start-at seconds:{t.start} --stop-at seconds:{t.length}')
+                    dest_path = dest_folder / f'{f.name}{cnt}{enc_suffix}.mp4'
+                    title_cmd = f'{_set_title} "{qi}/{tot} {title}" && ' if _set_title else ''
+                    cmds.append(f'{title_cmd}{cmd} -o {cmd_path_map(dest_path)} --start-at seconds:{t.start} --stop-at seconds:{t.length}')
                     ti += 1
             else:
                 qi += 1
-                dest_path = dest_folder / f'{f.name}-nvenc{quality}.mp4'
-                title = f'{_set_title} "{qi}/{tot} {escape_shell_str(f.name)}" && ' if _set_title else ''
-                cmds.append(f'{title}{cmd} -o {cmd_path_map(dest_path)}')
+                dest_path = dest_folder / f'{f.name}{enc_suffix}.mp4'
+                title_cmd = f'{_set_title} "{qi}/{tot} {title}" && ' if _set_title else ''
+                cmds.append(f'{title_cmd}{cmd} -o {cmd_path_map(dest_path)}')
 
             if _args.win:
                 cmds.append(f'move {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
