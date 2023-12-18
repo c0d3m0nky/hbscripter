@@ -40,6 +40,7 @@ ap = ArgumentParser()
 ap.add_argument("-t", "--trace", action='store_true', help="Ignore FPs Factor error")
 ap.add_argument("-rd", "--root-dir", type=str, help="Root directory")
 ap.add_argument("-rm", "--root-map", type=str, help="Replace root path segment ([root segment]:[replacement segment])")
+ap.add_argument('-nr', "--non-recursive", action='store_true', help="Only scan the root dir")
 ap.add_argument("-tbr", "--target-bitrate", type=str, help="Target bitrate")
 ap.add_argument('-win', "--win", action='store_true', help="Write queue for windows")
 ap.add_argument("--plan", action='store_true', help="Don't write queue")
@@ -310,14 +311,14 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                 cmds.append(f'{title_cmd}{cmd} -o {cmd_path_map(dest_path)}')
 
             if _args.win:
-                cmds.append(f'move {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
+                cmds.append(f'move /y {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
             else:
-                cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
+                cmds.append(f'mv --force {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
 
     if cmds:
         if _set_title:
             cmds.append(f'{_set_title} "Queue Completed"')
-        qfp = os.path.join(queue_dir, 'queue.txt' if _args.win else 'queue.sh')
+        qfp = os.path.join(queue_dir, 'queue.bat' if _args.win else 'queue.sh')
         qf = open(qfp, "w")
         qf.truncate()
         qf.write(_script_preamble + (" && ^\n" if _args.win else " &&\n").join(cmds))
@@ -746,25 +747,29 @@ def scan_dirs(skip_dunder_dirs=True) -> Tuple[List[Path], int, List[Path]]:
     cleanup = []
     file_count = 0
 
-    for subdir, dirs, files in os.walk(_root_dir):
-        file_count += len(files)
-        for d in dirs:
-            fdir = Path(os.path.join(subdir, d))
+    if not _args.non_recursive:
+        for subdir, dirs, files in os.walk(_root_dir):
+            file_count += len(files)
+            for d in dirs:
+                fdir = Path(os.path.join(subdir, d))
 
-            if _dir_filter and not re.search(_dir_filter, str(d), flags=re.IGNORECASE):
-                continue
-            elif skip_dunder_dirs and d == _dest_folder_name:
-                if [f for f in fdir.glob('*') if f.is_file()]:
-                    cleanup.append(fdir)
-                continue
-            elif skip_dunder_dirs and (d.startswith('.') or d.startswith(_dest_folder_name) or d.startswith('_.')):
-                continue
-            elif d == '___hbscripter' or '___hbscripter' in subdir:
-                continue
-            elif skip_dunder_dirs and '__..' in subdir:
-                continue
+                if _dir_filter and not re.search(_dir_filter, str(d), flags=re.IGNORECASE):
+                    continue
+                elif skip_dunder_dirs and d == _dest_folder_name:
+                    if [f for f in fdir.glob('*') if f.is_file()]:
+                        cleanup.append(fdir)
+                    continue
+                elif skip_dunder_dirs and (d.startswith('.') or d.startswith(_dest_folder_name) or d.startswith('_.')):
+                    continue
+                elif d == '___hbscripter' or '___hbscripter' in subdir:
+                    continue
+                elif skip_dunder_dirs and '__..' in subdir:
+                    continue
 
-            sdirs.append(fdir)
+                sdirs.append(fdir)
+    else:
+        file_count += len(list(_root_dir.glob('*')))
+
     return (sdirs, file_count, cleanup)
 
 
