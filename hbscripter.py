@@ -61,6 +61,7 @@ ap.add_argument("-ff", "--file-filter", type=str, choices=_file_filters.keys(), 
 ap.add_argument("-df", "--dir-filter", type=str, choices=_dir_filters.keys(), help="Directory filter")
 ap.add_argument("-ns", "--nautilus-sort", action='store_true', help="Sort like Nautilus file browser")
 ap.add_argument("--sort-test", action='store_true', help="Test file sorter")
+ap.add_argument("--no-bar", action='store_true', help="Don't use progress bar")
 _args = ap.parse_args()
 
 # takes a while, so avoid if --help called
@@ -324,7 +325,6 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                 #     cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
 
                 cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
-                
 
     if cmds:
         if _set_title:
@@ -435,7 +435,7 @@ def scan_dir(full_dir: Path):
                 cfcq = cf['cq']
                 enc_bitrate = cfcq if cfcq else ''
                 valid_cfg = True
-            else:                
+            else:
                 ms = _rx_times_str.search(f.stem)
                 renc_ms = _rx_renc_str.search(f.stem)
 
@@ -460,12 +460,11 @@ def scan_dir(full_dir: Path):
                         enc_bitrate = ms.group(4)
 
                     valid_cfg = True
-                    
 
             if not valid_cfg:
                 continue
 
-            try:                        
+            try:
                 v = cv2.VideoCapture(str(f))
                 fps = v.get(cv2.CAP_PROP_FPS)
                 frames = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -486,7 +485,7 @@ def scan_dir(full_dir: Path):
                         fmcq = 28
                         if fmxcq < fmcq:
                             fmxcq = fmcq
-                
+
                 log_trace(f'enc_bitrate: {enc_bitrate}')
                 ec = enc.EncodeConfig(full_dir, dest_folder, f.name, name, times, vlen, fps, bitrate, ext, cq, enc_bitrate, mcq, mxcq)
                 log_trace(f'self.targetCq: {ec.targetCq}')
@@ -612,10 +611,12 @@ def list_details(dirs: Union[List[Path], Path], file_count):
 
     _file_sorter(lambda x: clean_path(x), dirs, _root_dir)
 
-    if file_count > 30:
+    if not _args.no_bar and file_count > 30:
         pbar = tqdm(total=file_count, desc='Scanning files')
     else:
         pbar = None
+        if _args.no_bar:
+            print('Scanning files')
 
     fld_count = 0
 
@@ -844,11 +845,12 @@ def run():
             write_queue(_single_queue, Path(_root_dir))
 
 
-if _args.sort_test:
-    files = [Path(f) for f in glob.glob('./windows_sorting/*.txt')]
-    _file_sorter(lambda f: f.name, files, _root_dir)
+if __name__ == '__main__':
+    if _args.sort_test:
+        files = [Path(f) for f in glob.glob('./windows_sorting/*.txt')]
+        _file_sorter(lambda f: f.name, files, _root_dir)
 
-    for f in files:
-        print(f.name)
-else:
-    run()
+        for f in files:
+            print(f.name)
+    else:
+        run()
