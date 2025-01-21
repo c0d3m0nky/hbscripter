@@ -338,8 +338,8 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
         qf.write(cmd_delim.join(['echo no items']))
 
     qf.close()
-    st = os.stat(qfp)
-    os.chmod(qfp, st.st_mode | stat.S_IEXEC)
+    # st = os.stat(qfp)
+    # os.chmod(qfp, st.st_mode | stat.S_IEXEC)
 
 
 
