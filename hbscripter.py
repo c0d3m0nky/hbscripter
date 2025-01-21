@@ -261,8 +261,8 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
         if not b.destFolder.exists() and b.files:
             os.makedirs(b.destFolder)
 
-        os.chown(b.destFolder, _nobody_uid, _users_gid)
-        os.chmod(b.destFolder, 0o0777)
+        # os.chown(b.destFolder, _nobody_uid, _users_gid)
+        # os.chmod(b.destFolder, 0o0777)
 
         for f in b.files:
             cmd = ''
