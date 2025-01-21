@@ -325,17 +325,22 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                 #     cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
 
                 cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
+    qfp = os.path.join(queue_dir, 'queue.bat' if _args.win else 'queue.sh')
+    qf = open(qfp, "w")
+    qf.truncate()
+    cmd_delim = " && ^\n" if _args.win else " &&\n"
 
     if cmds:
         if _set_title:
             cmds.append(f'{_set_title} "Queue Completed"')
-        qfp = os.path.join(queue_dir, 'queue.bat' if _args.win else 'queue.sh')
-        qf = open(qfp, "w")
-        qf.truncate()
-        qf.write(_script_preamble + (" && ^\n" if _args.win else " &&\n").join(cmds))
-        qf.close()
-        st = os.stat(qfp)
-        os.chmod(qfp, st.st_mode | stat.S_IEXEC)
+        qf.write(_script_preamble + cmd_delim.join(cmds))
+    else:
+        qf.write(cmd_delim.join(['echo no items']))
+
+    qf.close()
+    st = os.stat(qfp)
+    os.chmod(qfp, st.st_mode | stat.S_IEXEC)
+
 
 
 def flag_file(ef: enc.EncodeConfig):
