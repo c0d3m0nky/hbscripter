@@ -8,6 +8,7 @@ import re
 import datetime
 import traceback
 import math
+import json
 from functools import reduce
 from pathlib import Path
 from argparse import ArgumentParser
@@ -92,6 +93,7 @@ _extensions = {
     '.ts': enc.defaultBitrateMod,
     '.avi': enc.defaultBitrateMod,
     '.mkv': enc.defaultBitrateMod,
+    '.mkvv': enc.defaultBitrateMod,
     '.wmv': enc.wmvBitrateMod,
     '.m4v': enc.defaultBitrateMod,
     '.mpg': enc.defaultBitrateMod,
@@ -313,7 +315,16 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
             if _args.win:
                 cmds.append(f'move /y {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
             else:
-                cmds.append(f'mv --force {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
+                # if Path(f.fileName).suffix == '.mkv':
+                #     dest1 = dest_folder / f'{f.fileName}v'
+                #     dest2 = dest_folder / f'{f.fileName}'
+                #     # cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest1)} && mv {cmd_path_map(dest1)} {cmd_path_map(dest2)}')
+                #     cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest1)}')
+                # else:
+                #     cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
+
+                cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
+                
 
     if cmds:
         if _set_title:
@@ -362,7 +373,13 @@ def scan_dir(full_dir: Path):
     short_dir = full_dir.relative_to(_root_dir).as_posix()
     log_trace(f'Checking {short_dir}')
     files = [f for f in full_dir.glob('*') if f.is_file() and f.suffix.lower() in _extensions.keys()]
+    configs = dict([(c.stem, c) for c in full_dir.glob('*') if c.is_file() and c.suffix.lower() == '.json'])
     optfiles = full_dir.glob('_.*')
+
+    for c in configs:
+        with open(configs[c]) as cf:
+            configs[c] = json.load(cf)
+
     cq = None
     mcq = 28
     mxcq = 50
@@ -401,36 +418,30 @@ def scan_dir(full_dir: Path):
         for f in files:
             fmcq = mcq
             fmxcq = mxcq
+
             if f.stem.startswith('~') or f.stem.startswith('!!'):
                 continue
-            ms = _rx_times_str.search(f.stem)
-            renc_ms = _rx_renc_str.search(f.stem)
 
-            if ms or renc_ms or _args.renc:
-                log_trace(f'ms: {ms}')
-                log_trace(f'renc_ms: {renc_ms}')
-                clean_path = str(f).replace(_root_dir.as_posix(), '')
-                try:
-                    ext = f.suffix.lower()
-                    v = cv2.VideoCapture(str(f))
-                    fps = v.get(cv2.CAP_PROP_FPS)
-                    frames = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
-                    vlen = math.ceil(frames / fps) + 1
-                    vkb = (f.stat().st_size / 1000) * 8
-                    bitrate = math.ceil(vkb / vlen)
-                    if not skip_res_check:
-                        height = v.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                        width = v.get(cv2.CAP_PROP_FRAME_WIDTH)
-                        res = height if height < width else width
+            ext = f.suffix.lower()
+            clean_path = str(f).replace(_root_dir.as_posix(), '')
 
-                        if res < 720 and fmcq < 30:
-                            fmcq = 30
-                            if fmxcq < fmcq:
-                                fmxcq = fmcq
-                        elif res < 1080 and fmcq < 28:
-                            fmcq = 28
-                            if fmxcq < fmcq:
-                                fmxcq = fmcq
+            valid_cfg = False
+
+            if f.name in configs:
+                cf = configs[f.name]
+
+                name = f.stem
+                times = cf['times']
+                cfcq = cf['cq']
+                enc_bitrate = cfcq if cfcq else ''
+                valid_cfg = True
+            else:                
+                ms = _rx_times_str.search(f.stem)
+                renc_ms = _rx_renc_str.search(f.stem)
+
+                if ms or renc_ms or _args.renc:
+                    log_trace(f'ms: {ms}')
+                    log_trace(f'renc_ms: {renc_ms}')
 
                     if renc_ms:
                         log_trace(f'file options renc_ms')
@@ -447,16 +458,47 @@ def scan_dir(full_dir: Path):
                         name = ms.group(1)
                         times = ms.group(2)
                         enc_bitrate = ms.group(4)
-                    log_trace(f'enc_bitrate: {enc_bitrate}')
-                    ec = enc.EncodeConfig(full_dir, dest_folder, f.name, name, times, vlen, fps, bitrate, ext, cq, enc_bitrate, mcq, mxcq)
-                    log_trace(f'self.targetCq: {ec.targetCq}')
-                    log_trace(f'self.setfps: {ec.setfps}')
-                    if ec.targetCq > mxcq and not enc_bitrate:
-                        ec.resDropped = True
-                    enc_files.append(ec)
-                except Exception as e:
-                    error(f'Error parsing {clean_path}\n{e}')
-                    traceback.print_exc()
+
+                    valid_cfg = True
+                    
+
+            if not valid_cfg:
+                continue
+
+            try:                        
+                v = cv2.VideoCapture(str(f))
+                fps = v.get(cv2.CAP_PROP_FPS)
+                frames = int(v.get(cv2.CAP_PROP_FRAME_COUNT))
+                vlen = math.ceil(frames / fps) + 1
+                vkb = (f.stat().st_size / 1000) * 8
+                bitrate = math.ceil(vkb / vlen)
+
+                if not skip_res_check:
+                    height = v.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                    width = v.get(cv2.CAP_PROP_FRAME_WIDTH)
+                    res = height if height < width else width
+
+                    if res < 720 and fmcq < 30:
+                        fmcq = 30
+                        if fmxcq < fmcq:
+                            fmxcq = fmcq
+                    elif res < 1080 and fmcq < 28:
+                        fmcq = 28
+                        if fmxcq < fmcq:
+                            fmxcq = fmcq
+                
+                log_trace(f'enc_bitrate: {enc_bitrate}')
+                ec = enc.EncodeConfig(full_dir, dest_folder, f.name, name, times, vlen, fps, bitrate, ext, cq, enc_bitrate, mcq, mxcq)
+                log_trace(f'self.targetCq: {ec.targetCq}')
+                log_trace(f'self.setfps: {ec.setfps}')
+
+                if ec.targetCq > mxcq and not enc_bitrate:
+                    ec.resDropped = True
+
+                enc_files.append(ec)
+            except Exception as e:
+                error(f'Error parsing {clean_path}\n{e}')
+                traceback.print_exc()
 
         if enc_files:
             _file_sorter(lambda x: x.name, enc_files)
