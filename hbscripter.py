@@ -101,7 +101,8 @@ _extensions = {
     '.flv': enc.defaultBitrateMod,
     '.webm': enc.defaultBitrateMod,
     '.vid': enc.defaultBitrateMod,
-    '.f4v': enc.defaultBitrateMod
+    '.f4v': enc.defaultBitrateMod,
+    '.divx': enc.defaultBitrateMod
 }
 
 _root_map = None
@@ -114,7 +115,9 @@ _dir_filter = None
 _file_sorter: Callable[[Callable[[Any], str], List, Path], None] = nautilus_sorter if _args.nautilus_sort else windows_sorter if _args.win else dblcmd_sorter
 _root_dir = Path(_args.root_dir).resolve() if _args.root_dir else Path('./').resolve()
 _set_title = 'title' if _args.win else 'set_title'
-_script_preamble = '' if _args.win else '''#!/bin/bash
+_script_preamble = '' if  _args.win else '''#! /usr/bin/env bash
+
+set -e
 
 function set_title() {
   echo -e "\033]0;$1\007";
@@ -296,7 +299,13 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
 
             cmd += f' -i {cmd_path_map(source_path)}'
             enc_suffix = f'-nvenc{quality}{fps}'
-            title = escape_shell_str(f.name)
+            title = f.name
+            max_title_len = 20
+
+            if len(title) > max_title_len + 3:
+                title = f'{title[0:max_title_len]}...'
+
+            title = escape_shell_str(title)
 
             if f.times:
                 ti = 0
@@ -324,11 +333,15 @@ def write_queue(batches: List[enc.EncodeBatch], queue_dir: Path) -> object:
                 # else:
                 #     cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
 
+                #cmds.append('sleep 1')
+                #cmds.append(f'ls -lha {cmd_path_map(dest_folder)}')
+                #cmds.append(f'ls -lha "$(dirname {cmd_path_map(source_path)})"')
+
                 cmds.append(f'mv {cmd_path_map(source_path)} {cmd_path_map(dest_folder / f.fileName)}')
     qfp = os.path.join(queue_dir, 'queue.bat' if _args.win else 'queue.sh')
     qf = open(qfp, "w")
     qf.truncate()
-    cmd_delim = " && ^\n" if _args.win else " &&\n"
+    cmd_delim = " && ^\n" if _args.win else ";\n"
 
     if cmds:
         if _set_title:
@@ -523,7 +536,21 @@ class LH:
 
 
 def file_details(f: Path, get_fps, get_bitrate, get_length) -> Dict[str, Union[str, int]]:
-    datum = {LH.path_hdr: f.name, '_stem': f.stem, '_include': False}
+    fname = f.name
+
+    # print(len(fname))
+
+    lencap = 70
+
+    if len(fname) > lencap:
+        if '~' in fname:
+            fname = f'{f.stem[:lencap]}...{f.stem[f.stem.index('~'):]}{f.suffix}'
+        elif '-nvenc' in fname:
+            fname = f'{f.stem[:lencap]}...{f.stem[f.stem.index('-nvenc'):]}{f.suffix}'
+        else:
+            fname = f'{f.stem[:lencap+10]}...'
+
+    datum = {LH.path_hdr: fname, '_stem': f.stem, '_include': False}
 
     ms1 = _rx_enc_settings_strip.search(f.stem)
     ms2 = _rx_enc_res_strip.search(f.stem)
